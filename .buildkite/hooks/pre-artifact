@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+set +u
+
+if [[ "${BUILDKITE_LABEL}" == ":hammer_and_wrench: Build & Test" ]]; then
+  echo "--- :file_folder: Flattening goreleaser output for :buildkite: :github: artifact upload"
+  mv goreleaser/* ./
+  rm -rf goreleaser
+fi

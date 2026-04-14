@@ -17,3 +17,17 @@ shim/pam_authelia.dylib
 # GoReleaser output (dist: goreleaser in .goreleaser.yml).
 /goreleaser/
 /dist/
+
+# Release artifacts flattened to repo root by the pre-artifact buildkite hook
+# (.buildkite/hooks/pre-artifact) after GoReleaser runs.
+/pam_authelia*.tar.gz
+/pam_authelia*.tar.gz.cdx.json
+/pam_authelia*.tar.gz.spdx.json
+/pam_authelia*.deb
+/checksums*
+
+# GoReleaser metadata files moved alongside the release artifacts by the
+# wholesale `mv goreleaser/* ./` in pre-artifact. Not uploaded to the release.
+/artifacts.json
+/metadata.json
+/config.yaml

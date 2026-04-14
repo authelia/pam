@@ -53,11 +53,10 @@ steps:
     agents:
       build: "unit-test"
     artifact_paths:
-      - "goreleaser/*.tar.gz"
-      - "goreleaser/*.deb"
-      - "goreleaser/checksums*"
-      - "goreleaser/*.sig"
-      - "goreleaser/*.{c,sp}dx.json"
+      - "*.tar.gz"
+      - "*.deb"
+      - "checksums*"
+      - "*.{c,sp}dx.json"
     key: "build"
     if: build.env("CI_BYPASS") != "true"
 EOF

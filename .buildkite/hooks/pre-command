@@ -5,7 +5,7 @@ set +u
 export PATH="${BUILDKITE_BUILD_CHECKOUT_PATH}/.buildkite/steps:${PATH}"
 
 if [[ "${BUILDKITE_LABEL}" == ":github: Deploy Artifacts" ]]; then
-  buildkite-agent artifact download "goreleaser/pam_authelia*.tar.gz*" .
-  buildkite-agent artifact download "goreleaser/pam_authelia*.deb*" .
-  buildkite-agent artifact download "goreleaser/checksums*" .
+  buildkite-agent artifact download "pam_authelia*.tar.gz*" .
+  buildkite-agent artifact download "pam_authelia*.deb*" .
+  buildkite-agent artifact download "checksums*" .
 fi
