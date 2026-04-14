@@ -1,0 +1,108 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+---
+version: 2
+
+project_name: pam_authelia
+dist: goreleaser
+
+snapshot:
+  version_template: '{{ .Version }}-dev-{{ .ShortCommit }}'
+
+before:
+  hooks:
+    - env VERSION={{ .Version }} bash shim/build-all.sh
+
+builds:
+  - id: pam_authelia
+    main: ./cmd/pam_authelia
+    env:
+      - CGO_ENABLED=0
+    flags: -trimpath
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm
+      - arm64
+    binary: '{{ .ProjectName }}'
+    ldflags:
+      - '-s -w'
+
+archives:
+  - id: linux-glibc
+    ids: [pam_authelia]
+    formats: tar.gz
+    name_template: '{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}'
+    files:
+      - src: 'shim/dist/linux-{{ .Arch }}-glibc/pam_authelia.so'
+        dst: pam_authelia.so
+      - LICENSE
+      - README.md
+
+  - id: linux-musl
+    ids: [pam_authelia]
+    formats: tar.gz
+    name_template: '{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}-musl'
+    files:
+      - src: 'shim/dist/linux-{{ .Arch }}-musl/pam_authelia.so'
+        dst: pam_authelia.so
+      - LICENSE
+      - README.md
+
+nfpms:
+  - id: debian
+    ids: [pam_authelia]
+    formats: [deb]
+    file_name_template: '{{ .PackageName }}_{{ .Version }}-1_{{ if eq .Arch "arm" }}armhf{{ else }}{{ .Arch }}{{ end }}.deb'  # yamllint disable-line rule:line-length
+    vendor: Authelia
+    homepage: https://www.authelia.com
+    maintainer: Authelia Team <team@authelia.com>
+    description: |
+      PAM module that delegates authentication (including 2FA) to an Authelia server.
+      Ships with the pam_authelia.so C shim and the pam_authelia Go helper invoked
+      over a stdin/stdout pipe protocol.
+    license: Apache-2.0
+    provides:
+      - pam_authelia
+    release: "1"
+    section: admin
+    priority: optional
+    contents:
+      - src: 'shim/dist/linux-{{ .Arch }}-glibc/pam_authelia.so'
+        dst: /lib/security/pam_authelia.so
+        file_info:
+          mode: 0644  # yamllint disable-line rule:octal-values
+    deb:
+      signature:
+        key_file: '{{ .Env.GPG_KEY_PATH }}'
+
+sboms:
+  - id: cdx
+    ids: [linux-glibc, linux-musl]
+    documents:
+      - "${artifact}.cdx.json"
+    args: ["$artifact", "-o", "cyclonedx-json=$document"]
+    disable: false
+
+  - id: spdx
+    ids: [linux-glibc, linux-musl]
+    documents:
+      - "${artifact}.spdx.json"
+    args: ["$artifact", "-o", "spdx-json=$document"]
+    disable: false
+
+signs:
+  - id: gpg
+    signature: '${artifact}.sig'
+    args: [
+      "--batch", "--pinentry-mode", "loopback",
+      "-u", "security@authelia.com",
+      "--passphrase", "{{ .Env.GPG_PASSWORD }}",
+      "--output", "${signature}",
+      "--detach-sign", "${artifact}",
+    ]
+    artifacts: checksum
+
+checksum:
+  name_template: 'checksums.sha256'
+...

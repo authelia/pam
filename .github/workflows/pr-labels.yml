@@ -1,0 +1,63 @@
+---
+name: PR Labels
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    name: Apply Conventional Commits label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176  # v2.17.0
+        with:
+          egress-policy: audit
+
+      - name: Parse PR title and apply label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            const re = /^(build|ci|docs|feat|fix|perf|refactor|release|revert|test)(\([a-z0-9-]+\))?!?: /;
+            const match = title.match(re);
+
+            if (!match) {
+              core.setFailed(`PR title does not follow Conventional Commits: ${title}`);
+              return;
+            }
+
+            const labelMap = {
+              feat:     'feature',
+              fix:      'fix',
+              perf:     'performance',
+              refactor: 'refactor',
+              docs:     'documentation',
+              build:    'build',
+              ci:       'ci',
+              test:     'test',
+              release:  'release',
+              revert:   'revert',
+            };
+
+            const label = labelMap[match[1]];
+            if (!label) {
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: [label],
+            });
+...

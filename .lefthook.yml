@@ -1,0 +1,82 @@
+---
+pre-commit:
+  piped: true
+  jobs:
+    - name: check tools
+      # yamllint disable rule:indentation
+      run: |
+        MISSING=""
+        COUNT=0
+
+        for TOOL in golangci-lint yamllint; do
+          if ! command -v ${TOOL} >/dev/null 2>&1; then
+            if [ "$COUNT" -eq 0 ]; then
+              MISSING=${TOOL}
+            elif [ "$COUNT" -eq 1 ]; then
+              MISSING="${MISSING} and ${TOOL}"
+            else
+              MISSING="$(echo "${MISSING}" | sed 's/ and /, /') and ${TOOL}"
+            fi
+            COUNT=$((COUNT + 1))
+          fi
+        done
+
+        if [ ${COUNT} -gt 0 ]; then
+          echo "❌ You must install ${MISSING}"
+          exit 1
+        fi
+      # yamllint enable rule:indentation
+
+    - name: linters
+      group:
+        parallel: true
+        jobs:
+          - name: golangci-lint
+            run: golangci-lint run --fix
+            glob: "*.go"
+            stage_fixed: true
+
+          - name: yamllint
+            run: yamllint -f parsable . && echo "0 issues."
+            glob: "*.{yml,yaml}"
+
+commit-msg:
+  jobs:
+    - name: conventional-commits
+      run: |
+        SUBJECT=$(head -n1 "{1}")
+
+        # Skip merge commits and fixup/squash autocommits.
+        case "$SUBJECT" in
+          Merge*|"fixup!"*|"squash!"*) exit 0 ;;
+        esac
+
+        if [ ${#SUBJECT} -gt 72 ]; then
+          echo "❌ Commit subject is ${#SUBJECT} chars, max is 72:"
+          echo "   $SUBJECT"
+          exit 1
+        fi
+
+        LOWER=$(printf '%s' "$SUBJECT" | tr '[:upper:]' '[:lower:]')
+        if [ "$SUBJECT" != "$LOWER" ]; then
+          echo "❌ Commit subject must be all lowercase:"
+          echo "   $SUBJECT"
+          exit 1
+        fi
+
+        TYPES='build|ci|docs|feat|fix|perf|refactor|release|revert|test'
+        SCOPES='authelia|buildkite|cmd|config|deps|golangci-lint|goreleaser|lefthook|protocol|qr|shim'
+
+        if printf '%s' "$SUBJECT" | grep -qE "^(${TYPES})(\((${SCOPES})\))?!?: .+"; then
+          exit 0
+        fi
+
+        echo "❌ Commit subject must follow Conventional Commits:"
+        echo "   <type>[(<scope>)][!]: <description>"
+        echo ""
+        echo "   Types:  ${TYPES}"
+        echo "   Scopes: ${SCOPES}"
+        echo ""
+        echo "   Got: ${SUBJECT}"
+        exit 1
+...

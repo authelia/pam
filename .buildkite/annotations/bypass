@@ -1,0 +1,8 @@
+<h4>CI Bypass</h4>
+<dl class="flex flex-wrap mxn1">
+  <div class="m1">
+    <dd>
+      CI steps were skipped because this build only contains documentation or non-code changes.
+    </dd>
+  </div>
+</dl>

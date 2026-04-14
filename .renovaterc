@@ -1,0 +1,45 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommitTypeAll(build)",
+    ":separatePatchReleases",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "branchPrefix": "renovate-",
+  "rebaseWhen": "conflicted",
+  "ignorePresets": [
+    ":prHourlyLimit2",
+    ":semanticPrefixFixDepsChoreOthers",
+    "workarounds:all"
+  ],
+  "enabledManagers": [
+    "github-actions",
+    "gomod"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "commitMessageAction": "update",
+  "packageRules": [
+    {
+      "matchDatasources": [
+        "go"
+      ],
+      "addLabels": [
+        "go"
+      ]
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "addLabels": [
+        "github-actions"
+      ]
+    }
+  ],
+  "postUpdateOptions": [
+    "gomodTidy"
+  ]
+}
