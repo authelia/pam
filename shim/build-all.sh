@@ -11,8 +11,10 @@ DIST_DIR="${SHIM_DIR}/dist"
 
 VERSION="${VERSION:-0.0.0-dev}"
 
-# musl relies on a fortify-shim header directory shipped with the crossbuild container.
-MUSL_EXTRA_CPPFLAGS='-I/usr/local/include/fortify'
+# musl relies on a fortify-shim header directory shipped with the crossbuild
+# container. Use -isystem (not -I) so the upstream fortify-headers project's
+# minor pedantic-mode violations don't trip our -Werror -pedantic build.
+MUSL_EXTRA_CPPFLAGS='-isystem /usr/local/include/fortify'
 
 # target=<libc>:<arch>:<cc>
 TARGETS=(
