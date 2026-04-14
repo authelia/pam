@@ -27,7 +27,6 @@ jobs:
           PIPELINE: pam
           COMMIT: ${{ github.sha }}
           BUILDKITE_TOKEN: ${{ secrets.BUILDKITE_TOKEN }}
-        # yamllint disable rule:indentation
         run: |
           # Fetch artifact metadata and prepare hashes
           initial=true
@@ -44,10 +43,10 @@ jobs:
             if [ "${state}" = "passed" ]; then
               break
             elif [ "${initial}" = "true" ]; then
-              sleep 600
+              sleep 60
               initial=false
             else
-              sleep 300
+              sleep 30
             fi
           done
           echo "Artifact metadata retrieved"
@@ -60,7 +59,6 @@ jobs:
             ' | base64 -w0)
 
           echo "hashes=${hashes}" >> "${GITHUB_OUTPUT}"
-        # yamllint enable rule:indentation
 
   provenance:
     needs: [buildkite]
