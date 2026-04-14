@@ -3,7 +3,7 @@
 set -euo pipefail
 
 echo "--- :go: Running unit tests"
-go test -race
+go test -race ./...
 
 SNAPSHOT_FLAG=""
 if [[ -z "${BUILDKITE_TAG:-}" ]]; then
