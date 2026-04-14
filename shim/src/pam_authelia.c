@@ -11,8 +11,10 @@
 
 #define __STDC_WANT_LIB_EXT1__ 1
 #define _DEFAULT_SOURCE
+#define _GNU_SOURCE
 
 #include <errno.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -23,7 +25,12 @@
 #include <unistd.h>
 
 #ifdef __linux__
+#include <arpa/inet.h>
+#include <dirent.h>
+#include <netinet/in.h>
 #include <sys/prctl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #endif
 
 #include <security/pam_appl.h>
@@ -48,10 +55,7 @@ static const char pam_authelia_version[] PAM_AUTHELIA_VERSION_ATTR =
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
 
-/*
- * Securely clear memory. Uses explicit_bzero where available to prevent
- * compiler optimization from eliding the clear.
- */
+/* Wipe memory in a way the compiler can't elide. */
 static void
 secure_clear(void *ptr, size_t len)
 {
@@ -67,11 +71,8 @@ secure_clear(void *ptr, size_t len)
 #endif
 }
 
-/*
- * Prompt the user via the PAM conversation function.
- * msg_style: PAM_PROMPT_ECHO_OFF, PAM_PROMPT_ECHO_ON, or PAM_TEXT_INFO.
- * If response is non-NULL, the caller must free the returned string.
- */
+/* Send a single message via the PAM conversation function. Caller owns the
+ * returned response string when `response` is non-NULL. */
 static int
 authelia_pam_prompt(pam_handle_t *pamh, int msg_style, const char *prompt_text, char **response)
 {
@@ -180,9 +181,10 @@ config_parse(struct pam_authelia_config *cfg, int argc, const char **argv)
 }
 
 /* -------------------------------------------------------------------------- */
-/* Write a line to file descriptor with error checking.                       */
+/* Pipe I/O                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/* Write `line` followed by '\n', retrying short writes and EINTR. */
 static int
 write_line(int fd, const char *line)
 {
@@ -199,7 +201,6 @@ write_line(int fd, const char *line)
 		len -= (size_t)n;
 	}
 
-	/* Write trailing newline. */
 	while (1) {
 		n = write(fd, "\n", 1);
 		if (n < 0) {
@@ -212,11 +213,6 @@ write_line(int fd, const char *line)
 	return 0;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Read a line from a file descriptor, aborting if deadline (monotonic-time    */
-/* seconds) is reached. Returns 0 on success, -1 on EOF/error, 1 on timeout.   */
-/* -------------------------------------------------------------------------- */
-
 static time_t
 monotonic_seconds(void)
 {
@@ -227,6 +223,24 @@ monotonic_seconds(void)
 	return ts.tv_sec;
 }
 
+/* Seconds → milliseconds for poll(2), clamped to [0, INT_MAX]. */
+static int
+clamp_poll_ms(time_t seconds)
+{
+	if (seconds <= 0) {
+		return 0;
+	}
+
+	long long ms = (long long)seconds * 1000LL;
+	if (ms > (long long)INT_MAX) {
+		return INT_MAX;
+	}
+
+	return (int)ms;
+}
+
+/* Read until '\n' or EOF, capped at bufsz-1 bytes. Returns 0 on success,
+ * -1 on EOF/error, 1 on deadline. */
 static int
 read_line(int fd, char *buf, size_t bufsz, time_t deadline)
 {
@@ -244,14 +258,13 @@ read_line(int fd, char *buf, size_t bufsz, time_t deadline)
 		pfd.fd = fd;
 		pfd.events = POLLIN;
 
-		int remaining_ms = (int)((deadline - now) * 1000);
-		int pr = poll(&pfd, 1, remaining_ms);
+		int pr = poll(&pfd, 1, clamp_poll_ms(deadline - now));
 		if (pr < 0) {
 			if (errno == EINTR) continue;
 			return -1;
 		}
 		if (pr == 0) {
-			return 1; /* Timeout. */
+			return 1;
 		}
 
 		n = read(fd, &c, 1);
@@ -273,12 +286,8 @@ read_line(int fd, char *buf, size_t bufsz, time_t deadline)
 	return 0;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Read exactly `want` bytes into `buf`, aborting at deadline. Used for the   */
-/* length-prefixed PROMPT_MULTI_VISIBLE payload whose contents may include    */
-/* newlines so line-framing can't be used. Same return codes as read_line.    */
-/* -------------------------------------------------------------------------- */
-
+/* Read exactly `want` bytes — used for the length-prefixed PROMPT_MULTI_VISIBLE
+ * payload, whose contents may contain newlines. Same return codes as read_line. */
 static int
 read_bytes(int fd, char *buf, size_t want, time_t deadline)
 {
@@ -294,8 +303,7 @@ read_bytes(int fd, char *buf, size_t want, time_t deadline)
 		pfd.fd = fd;
 		pfd.events = POLLIN;
 
-		int remaining_ms = (int)((deadline - now) * 1000);
-		int pr = poll(&pfd, 1, remaining_ms);
+		int pr = poll(&pfd, 1, clamp_poll_ms(deadline - now));
 		if (pr < 0) {
 			if (errno == EINTR) continue;
 			return -1;
@@ -319,6 +327,154 @@ read_bytes(int fd, char *buf, size_t want, time_t deadline)
 	return 0;
 }
 
+#ifdef __linux__
+/* -------------------------------------------------------------------------- */
+/* Client disconnect detection                                                */
+/* -------------------------------------------------------------------------- */
+
+/* Compare a peer address against PAM_RHOST. */
+static int
+addr_matches_rhost(const struct sockaddr_storage *addr, const char *rhost)
+{
+	char peer[INET6_ADDRSTRLEN];
+
+	if (addr->ss_family == AF_INET) {
+		const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
+		if (inet_ntop(AF_INET, &sin->sin_addr, peer, sizeof(peer)) == NULL) {
+			return 0;
+		}
+
+		return strcmp(peer, rhost) == 0;
+	}
+
+	if (addr->ss_family == AF_INET6) {
+		const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)addr;
+		if (inet_ntop(AF_INET6, &sin6->sin6_addr, peer, sizeof(peer)) == NULL) {
+			return 0;
+		}
+
+		/* Literal match first (covers native IPv6 + IPv4-mapped on both sides). */
+		if (strcmp(peer, rhost) == 0) {
+			return 1;
+		}
+
+		/* sshd often sets PAM_RHOST to the bare IPv4 form for ::ffff:1.2.3.4
+		 * peers, so also try the stripped version. */
+		if (strncmp(peer, "::ffff:", 7) == 0 && strcmp(peer + 7, rhost) == 0) {
+			return 1;
+		}
+
+		return 0;
+	}
+
+	return 0;
+}
+
+/* Walk /proc/self/fd for the AF_INET/AF_INET6 socket whose peer matches
+ * PAM_RHOST. Returns sshd's fd (do not close) or -1 if not found. */
+static int
+find_client_socket(pam_handle_t *pamh)
+{
+	const char *rhost = NULL;
+	if (pam_get_item(pamh, PAM_RHOST, (const void **)&rhost) != PAM_SUCCESS ||
+	    rhost == NULL || rhost[0] == '\0') {
+		return -1;
+	}
+
+	DIR *dir = opendir("/proc/self/fd");
+	if (dir == NULL) {
+		return -1;
+	}
+
+	int found = -1;
+	struct dirent *entry;
+
+	while ((entry = readdir(dir)) != NULL) {
+		if (entry->d_name[0] < '0' || entry->d_name[0] > '9') {
+			continue;
+		}
+
+		int fd = atoi(entry->d_name);
+		if (fd < 0) {
+			continue;
+		}
+
+		struct stat st;
+		if (fstat(fd, &st) != 0 || !S_ISSOCK(st.st_mode)) {
+			continue;
+		}
+
+		struct sockaddr_storage addr;
+		socklen_t addrlen = sizeof(addr);
+		if (getpeername(fd, (struct sockaddr *)&addr, &addrlen) != 0) {
+			continue;
+		}
+
+		if (addr_matches_rhost(&addr, rhost)) {
+			found = fd;
+			break;
+		}
+	}
+
+	closedir(dir);
+	return found;
+}
+
+#define WAIT_CMD_READY     0
+#define WAIT_CLIENT_GONE   1
+#define WAIT_DEADLINE      2
+#define WAIT_ERROR        -1
+
+/* Block until the command pipe is readable, the client socket disconnects, or
+ * the deadline expires. client_fd < 0 disables disconnect monitoring. */
+static int
+wait_for_event(int cmd_fd, int client_fd, time_t deadline)
+{
+	while (1) {
+		time_t now = monotonic_seconds();
+		if (now >= deadline) {
+			return WAIT_DEADLINE;
+		}
+
+		struct pollfd pfds[2];
+		nfds_t nfds = 1;
+
+		pfds[0].fd = cmd_fd;
+		pfds[0].events = POLLIN;
+		pfds[0].revents = 0;
+
+		if (client_fd >= 0) {
+			pfds[1].fd = client_fd;
+			pfds[1].events = POLLRDHUP;
+			pfds[1].revents = 0;
+			nfds = 2;
+		}
+
+		int pr = poll(pfds, nfds, clamp_poll_ms(deadline - now));
+		if (pr < 0) {
+			if (errno == EINTR) continue;
+			return WAIT_ERROR;
+		}
+		if (pr == 0) {
+			return WAIT_DEADLINE;
+		}
+
+		if (nfds == 2 && (pfds[1].revents &
+		    (POLLRDHUP | POLLHUP | POLLERR | POLLNVAL))) {
+			return WAIT_CLIENT_GONE;
+		}
+
+		if (pfds[0].revents & POLLIN) {
+			return WAIT_CMD_READY;
+		}
+
+		if (pfds[0].revents & (POLLHUP | POLLERR | POLLNVAL)) {
+			return WAIT_ERROR;
+		}
+	}
+}
+#endif /* __linux__ */
+
 /* -------------------------------------------------------------------------- */
 /* PAM module entry point.                                                    */
 /* -------------------------------------------------------------------------- */
@@ -338,18 +494,15 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
 
 	(void)flags;
 
-	/* Parse configuration. */
 	config_init(&cfg);
 	if (config_parse(&cfg, argc, argv) != 0) {
 		return PAM_AUTH_ERR;
 	}
 
-	/* Get username. */
 	if (pam_get_user(pamh, &username, NULL) != PAM_SUCCESS || username == NULL) {
 		return PAM_AUTH_ERR;
 	}
 
-	/* Create pipes. */
 	if (pipe(pipe_to_child) != 0) {
 		return PAM_AUTH_ERR;
 	}
@@ -370,14 +523,11 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
 
 	if (child == 0) {
 		/* ---- Child process ---- */
-		close(pipe_to_child[1]);   /* Close write end of stdin pipe.  */
-		close(pipe_from_child[0]); /* Close read end of stdout pipe.  */
+		close(pipe_to_child[1]);
+		close(pipe_from_child[0]);
 
-		/* Redirect stdin/stdout. */
-		if (dup2(pipe_to_child[0], STDIN_FILENO) < 0) {
-			_exit(1);
-		}
-		if (dup2(pipe_from_child[1], STDOUT_FILENO) < 0) {
+		if (dup2(pipe_to_child[0], STDIN_FILENO) < 0 ||
+		    dup2(pipe_from_child[1], STDOUT_FILENO) < 0) {
 			_exit(1);
 		}
 
@@ -385,28 +535,19 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
 		close(pipe_from_child[1]);
 
 #ifdef __linux__
-		/*
-		 * Ask the kernel to send SIGTERM to this child if the parent process ever
-		 * dies (e.g. sshd drops the session mid-authentication). Without this, a
-		 * long-running operation like OAuth2 device-authorization polling would
-		 * survive past the end of the SSH session and keep hammering the API.
-		 */
+		/* Get SIGTERM if sshd dies mid-auth so device-auth polling can't outlive
+		 * the SSH session and keep hammering the Authelia API. */
 		prctl(PR_SET_PDEATHSIG, SIGTERM);
 
-		/*
-		 * PR_SET_PDEATHSIG is only effective while the calling task's parent has
-		 * not already exited. If the parent died between fork() and now we would
-		 * never be signaled, so verify the parent is still alive and exit if not.
-		 */
+		/* PR_SET_PDEATHSIG is a no-op if the parent already exited between
+		 * fork() and now; guard explicitly. */
 		if (getppid() == 1) {
 			_exit(1);
 		}
 #endif
 
-		/* Build argument list for the Go binary. Every APPEND_ARG invocation is
-		 * bounds-checked so we never write past args[MAX_ARGS-1] even if someone
-		 * adds more options later. The final NULL terminator also needs a slot,
-		 * hence the check against MAX_ARGS - 1. */
+		/* APPEND_ARG bounds-checks every write so the array can't overflow if
+		 * options are added later. The trailing NULL needs a slot too. */
 		char timeout_str[16];
 		snprintf(timeout_str, sizeof(timeout_str), "%d", cfg.timeout);
 
@@ -462,31 +603,21 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
 		args[ai] = NULL;
 
 		execv(cfg.binary, args);
-
-		/* execv only returns on error. */
 		_exit(127);
 	}
 
 	/* ---- Parent process ---- */
-	close(pipe_to_child[0]);   /* Close read end of stdin pipe.   */
-	close(pipe_from_child[1]); /* Close write end of stdout pipe. */
+	close(pipe_to_child[0]);
+	close(pipe_from_child[1]);
 
-	/* Send username to the Go binary. */
 	if (write_line(pipe_to_child[1], username) != 0) {
 		goto cleanup;
 	}
 
-	/*
-	 * Send the password to the Go binary. We always try PAM_AUTHTOK first so that
-	 * a preceding module (e.g. pam_unix) that already prompted for the password
-	 * doesn't cause a second prompt here. If nothing in the stack has set the token,
-	 * we prompt via pam_conv ourselves.
-	 *
-	 * When method-priority starts with "device_authorization", no password is needed
-	 * (the device flow handles authentication end-to-end). We send an empty placeholder
-	 * to keep the protocol in sync. The Go binary decides whether to actually skip 1FA
-	 * based on the full priority list and whether oauth2-client-id is configured.
-	 */
+	/* Pull the password from PAM_AUTHTOK if a preceding module already prompted
+	 * for it; otherwise prompt ourselves. When method-priority starts with
+	 * device_authorization the device flow is self-contained, so we send an
+	 * empty placeholder to keep the protocol in sync without prompting. */
 	int device_first = 0;
 	if (cfg.method_priority != NULL && strncmp(cfg.method_priority, "device_authorization", 20) == 0) {
 		char next = cfg.method_priority[20];
@@ -514,16 +645,24 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char **argv)
 		}
 	}
 
-	/*
-	 * Protocol loop: read commands from the Go binary until it reports SUCCESS/FAILURE
-	 * or the overall timeout (cfg.timeout seconds, default 60) is reached. The deadline
-	 * guards against hung children — e.g. OAuth2 device-authorization polling that
-	 * outlives the SSH session, which can happen when sshd doesn't promptly signal us
-	 * after a client disconnect.
-	 */
+	/* Protocol loop: read commands from the Go binary until SUCCESS/FAILURE or
+	 * the deadline fires. On Linux we additionally watch sshd's client socket
+	 * with POLLRDHUP so a mid-auth disconnect tears down the Go child near
+	 * instantly instead of letting it keep polling Authelia. */
 	time_t deadline = monotonic_seconds() + cfg.timeout;
 
+#ifdef __linux__
+	int client_fd = find_client_socket(pamh);
+#endif
+
 	while (1) {
+#ifdef __linux__
+		int evt = wait_for_event(pipe_from_child[0], client_fd, deadline);
+		if (evt == WAIT_CLIENT_GONE || evt == WAIT_DEADLINE || evt == WAIT_ERROR) {
+			break;
+		}
+#endif
+
 		int rc = read_line(pipe_from_child[0], line, sizeof(line), deadline);
 		if (rc != 0) {
 			break;
