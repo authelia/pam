@@ -74,5 +74,15 @@ cat << EOF
       upload: "fast"
     key: "artifacts"
     if: build.tag != null && build.env("CI_BYPASS") != "true"
+
+  - label: ":debian: :fedora: :ubuntu: Deploy APT"
+    command: "aptdeploy.sh"
+    depends_on:
+      - "artifacts"
+    retry:
+      automatic: true
+    agents:
+      upload: "fast"
+    if: build.tag != null && build.env("CI_BYPASS") != "true"
 EOF
 fi
