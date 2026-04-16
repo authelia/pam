@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"log/syslog"
@@ -87,9 +88,9 @@ func run() error {
 		return writeFailure(client, writer, fmt.Sprintf("failed to read password from shim: %v", err), genericAuthFailure)
 	}
 
-	// Device flow is self-contained; when it's first in priority, skip 1FA + user info.
+	// Device flow is self-contained — performDeviceAuth enforces its own identity binding, so skip 1FA + user info.
 	if len(cfg.MethodPriority) > 0 && cfg.MethodPriority[0] == authelia.MethodDeviceAuth && cfg.OAuth2ClientID != "" {
-		if err = performDeviceAuth(cfg, client, reader, writer); err != nil {
+		if err = performDeviceAuth(cfg, client, username, reader, writer); err != nil {
 			return writeFailure(client, writer, err.Error(), genericAuthFailure)
 		}
 
@@ -109,7 +110,7 @@ func run() error {
 		return writeFailure(client, writer, fmt.Sprintf("user info fetch failed: %v", err), genericAuthFailure)
 	}
 
-	if err = performSecondFactor(cfg, client, userInfo, reader, writer); err != nil {
+	if err = performSecondFactor(cfg, client, userInfo, username, reader, writer); err != nil {
 		return writeFailure(client, writer, err.Error(), genericAuthFailure)
 	}
 
@@ -177,7 +178,7 @@ func methodUsable(method string, cfg *config.Config, userInfo *authelia.UserInfo
 	}
 }
 
-func performSecondFactor(cfg *config.Config, client *authelia.Client, userInfo *authelia.UserInfoResponse, reader *bufio.Reader, writer *os.File) error {
+func performSecondFactor(cfg *config.Config, client *authelia.Client, userInfo *authelia.UserInfoResponse, username string, reader *bufio.Reader, writer *os.File) error {
 	method, err := pickSecondFactorMethod(cfg, client, userInfo)
 	if err != nil {
 		return err
@@ -189,7 +190,7 @@ func performSecondFactor(cfg *config.Config, client *authelia.Client, userInfo *
 	case authelia.MethodMobilePush:
 		return performDuoPush(client, writer)
 	case authelia.MethodDeviceAuth:
-		return performDeviceAuth(cfg, client, reader, writer)
+		return performDeviceAuth(cfg, client, username, reader, writer)
 	default:
 		return fmt.Errorf("unsupported 2FA method: %s", method)
 	}
@@ -217,8 +218,10 @@ func performTOTP(client *authelia.Client, reader *bufio.Reader, writer *os.File)
 
 // performDeviceAuth runs the OAuth2 device-authorization flow. The QR is sent
 // via PAM_PROMPT_ECHO_ON to bypass BSD vis(3) sanitisation of PAM_TEXT_INFO;
-// the user must press Enter after approving before polling resumes.
-func performDeviceAuth(cfg *config.Config, client *authelia.Client, reader *bufio.Reader, writer *os.File) error {
+// the user must press Enter after approving before polling resumes. The issued
+// token is then bound to the PAM username via VerifyDeviceIdentity — without
+// that check, any Authelia user could approve the QR and log in as someone else.
+func performDeviceAuth(cfg *config.Config, client *authelia.Client, username string, reader *bufio.Reader, writer *os.File) error {
 	if cfg.OAuth2ClientID == "" {
 		return fmt.Errorf("device authorization requires --oauth2-client-id")
 	}
@@ -261,7 +264,15 @@ func performDeviceAuth(cfg *config.Config, client *authelia.Client, reader *bufi
 		return fmt.Errorf("failed to read device-auth prompt response: %w", err)
 	}
 
-	return client.PollDeviceToken(cfg.OAuth2ClientID, cfg.OAuth2ClientSecret, resp.DeviceCode, resp.ExpiresIn, resp.Interval)
+	accessToken, idToken, err := client.PollDeviceToken(cfg.OAuth2ClientID, cfg.OAuth2ClientSecret, resp.DeviceCode, resp.ExpiresIn, resp.Interval)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	defer cancel()
+
+	return client.VerifyDeviceIdentity(ctx, cfg.OAuth2ClientID, accessToken, idToken, username)
 }
 
 // validateVerificationURL requires the URL to be https, under the configured

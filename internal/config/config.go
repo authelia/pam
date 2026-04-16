@@ -63,9 +63,9 @@ func Parse(args []string) (*Config, error) {
 	fs.IntVar(&timeout, "timeout", 30, "HTTP request timeout in seconds")
 	fs.BoolVar(&debug, "debug", false, "Enable debug logging to stderr")
 	fs.StringVar(&methodPriority, "method-priority", "", "Comma-separated 2FA methods to try in order (overrides user preference): totp,mobile_push,device_authorization,user")
-	fs.StringVar(&oauth2ClientID, "oauth2-client-id", "", "OAuth2 client ID for device authorization grant fallback")
+	fs.StringVar(&oauth2ClientID, "oauth2-client-id", "", "OAuth2 client ID for Device Authorization grant fallback")
 	fs.StringVar(&oauth2ClientSecret, "oauth2-client-secret", "", "OAuth2 client secret for confidential clients")
-	fs.StringVar(&oauth2Scope, "oauth2-scope", "openid,profile", "Comma-separated OAuth2 scopes to request for device authorization")
+	fs.StringVar(&oauth2Scope, "oauth2-scope", "openid,authelia.pam", "Comma-separated OAuth2 scopes to request for Device Authorization")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -124,19 +124,39 @@ func Parse(args []string) (*Config, error) {
 }
 
 // parseOAuth2Scope converts the comma-separated PAM argument to the space-separated
-// form required by the OAuth2 device authorization endpoint.
+// form required by the OAuth2 Device Authorization endpoint. Both "openid" (for
+// the ID token) and the authelia.PAMScope (which grants the username claim) are
+// mandatory — without them the device-flow identity cannot be bound to the PAM
+// username.
 func parseOAuth2Scope(raw string) (string, error) {
 	parts := strings.Split(raw, ",")
 	scopes := make([]string, 0, len(parts))
 
+	var hasOpenID, hasPAMScope bool
+
 	for _, p := range parts {
 		if p = strings.TrimSpace(p); p != "" {
 			scopes = append(scopes, p)
+
+			switch p {
+			case "openid":
+				hasOpenID = true
+			case authelia.PAMScope:
+				hasPAMScope = true
+			}
 		}
 	}
 
 	if len(scopes) == 0 {
 		return "", errors.New("--oauth2-scope must not be empty")
+	}
+
+	if !hasOpenID {
+		return "", errors.New("--oauth2-scope must include openid (required to verify the device-flow identity)")
+	}
+
+	if !hasPAMScope {
+		return "", fmt.Errorf("--oauth2-scope must include %s (grants the %s claim used to bind the device flow)", authelia.PAMScope, authelia.PAMUsernameClaim)
 	}
 
 	return strings.Join(scopes, " "), nil

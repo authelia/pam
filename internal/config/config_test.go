@@ -89,11 +89,15 @@ func TestParseOAuth2Scope(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"default", "openid,profile", "openid profile", false},
-		{"single", "openid", "openid", false},
-		{"many", "openid,profile,email,groups", "openid profile email groups", false},
-		{"trimmed whitespace", " openid , profile ", "openid profile", false},
-		{"repeated commas", "openid,,,profile", "openid profile", false},
+		{"default", "openid,authelia.pam", "openid authelia.pam", false},
+		{"with profile", "openid,profile,authelia.pam", "openid profile authelia.pam", false},
+		{"many", "openid,profile,email,groups,authelia.pam", "openid profile email groups authelia.pam", false},
+		{"trimmed whitespace", " openid , authelia.pam ", "openid authelia.pam", false},
+		{"repeated commas", "openid,,,authelia.pam", "openid authelia.pam", false},
+		{"missing openid", "profile,authelia.pam", "", true},
+		{"missing pam scope", "openid", "", true},
+		{"missing pam scope with profile", "openid,profile", "", true},
+		{"missing both", "profile,email", "", true},
 		{"empty", "", "", true},
 		{"only commas", ",,,", "", true},
 		{"only whitespace", "   ", "", true},
@@ -197,5 +201,9 @@ func TestParseDefaults(t *testing.T) {
 
 	if cfg.CACert != "" {
 		t.Errorf("CACert = %q, want empty", cfg.CACert)
+	}
+
+	if cfg.OAuth2Scope != "openid authelia.pam" {
+		t.Errorf("OAuth2Scope = %q, want %q", cfg.OAuth2Scope, "openid authelia.pam")
 	}
 }

@@ -155,9 +155,9 @@ Options are passed as space-separated `key=value` arguments after the module pat
 | `timeout=`              |          | `60`                      | Upper bound (seconds) on the entire PAM exchange. Raise for slow device-auth users.      |
 | `binary=`               |          | `/usr/bin/pam_authelia`   | Override the Go helper binary path.                                                      |
 | `method-priority=`      |          | (use Authelia preference) | Comma-separated 2FA method order. See [Method priority](#method-priority).               |
-| `oauth2-client-id=`     |          | -                         | OAuth2 client ID for the device authorization flow.                                      |
+| `oauth2-client-id=`     |          | -                         | OAuth2 client ID for the Device Authorization flow.                                      |
 | `oauth2-client-secret=` |          | -                         | OAuth2 client secret (for confidential clients).                                         |
-| `oauth2-scope=`         |          | `openid,profile`          | Comma-separated scopes to request on the device authorization endpoint.                  |
+| `oauth2-scope=`         |          | `openid,authelia.pam`     | Comma-separated scopes to request on the Device Authorization endpoint. **Both `openid` and `authelia.pam` are required** — see [Device Authorization identity binding](#device-authorization-identity-binding). Extra scopes can be appended freely. |
 | `debug`                 |          | off                       | Boolean flag - emits debug lines via syslog (`LOG_AUTH`) tagged `pam_authelia`.          |
 
 ### Auth levels
@@ -175,7 +175,7 @@ attempt, in order. Valid values:
 
 - **`totp`** - time-based one-time password. Requires the user to have TOTP set up in Authelia.
 - **`mobile_push`** - Duo Push. Requires Duo configured in Authelia and enrolled for the user.
-- **`device_authorization`** - OAuth2 RFC 8628 device authorization. Renders a scannable QR code in the terminal.
+- **`device_authorization`** - OAuth2 RFC 8628 Device Authorization. Renders a scannable QR code in the terminal.
 - **`user`** - resolves to the user's Authelia preference (TOTP / Duo / device-auth fallback).
 
 The first method in the list that is *usable for the current user* wins. Listing `user` last is a sensible default
@@ -220,11 +220,13 @@ auth    required   pam_authelia.so  url=https://auth.example.com \
 `auth-level=2FA` tells `pam_authelia` to skip its own first-factor request and pull the password from `PAM_AUTHTOK`
 (set by the preceding `pam_unix` module) for the silent Authelia validation that runs before the 2FA prompt.
 
-### 3. Passwordless via OAuth2 device authorization
+### 3. Passwordless via OAuth2 Device Authorization
 
 The user types nothing - a QR code is rendered in the terminal, they scan it on their phone, approve the request,
-and press Enter. Requires an OAuth2 client configured in Authelia with the device authorization grant type
-enabled. If users find themselves running up against the default 60-second budget, you may want to raise
+and press Enter. Requires an OAuth2 client configured in Authelia with the Device Authorization grant type
+enabled, plus a claims policy that exposes the `authelia.pam.username` claim — see
+[Device Authorization identity binding](#device-authorization-identity-binding) for the full server-side
+configuration. If users find themselves running up against the default 60-second budget, you may want to raise
 `timeout=` (and the matching `LoginGraceTime` in `sshd_config`).
 
 ```
@@ -234,7 +236,7 @@ auth    required   pam_authelia.so  url=https://auth.example.com \
                                     cookie-name=authelia_session \
                                     oauth2-client-id=device-code \
                                     oauth2-client-secret=insecure-secret \
-                                    oauth2-scope=openid,profile,email,groups \
+                                    oauth2-scope=openid,authelia.pam \
                                     method-priority=device_authorization,user
 
 @include common-account
@@ -244,7 +246,7 @@ auth    required   pam_authelia.so  url=https://auth.example.com \
 The `device_authorization,user` priority list tries the device flow first and falls back to whatever the user has
 configured in Authelia if the device flow fails (e.g. the OAuth2 client isn't reachable).
 
-### 4. Prefer TOTP, fall back to device authorization
+### 4. Prefer TOTP, fall back to Device Authorization
 
 Mixed-method deployment: users with TOTP enrolled get a TOTP prompt; everyone else gets the QR code.
 
@@ -326,14 +328,92 @@ Commits format on `commit-msg`. Install lefthook with `lefthook install`.
 
 - All Authelia API requests are HTTPS-only — `http://` URLs are rejected at config parse time.
 - TLS minimum is 1.2; custom CAs are supported via `ca-cert=`.
-- Verification URLs returned by the device authorization endpoint are validated to be `https://` and to point at
+- Verification URLs returned by the Device Authorization endpoint are validated to be `https://` and to point at
   the configured Authelia host before being rendered as a QR code (defends against phishing via tampered server
   responses).
+- Device Authorization tokens are bound to the requesting Linux username via OIDC claim verification — see
+  [Device Authorization identity binding](#device-authorization-identity-binding) below.
 - Passwords are zeroed in the C shim immediately after use via `explicit_bzero` / `memset_s`.
 - Response bodies are not logged — only status codes and protocol error fields. Access tokens never reach disk.
 - The C shim is built with `-fstack-protector-strong`, `-D_FORTIFY_SOURCE=3`, `-fPIC -fno-plt`, and full RELRO/BIND_NOW.
 - Length-bounded input handling end to end: protocol lines capped at 64 KiB, prompt payloads at 16 KiB, verification
   URLs at 2 KiB.
+
+### Device Authorization identity binding
+
+Without an explicit identity check, *any* user with access to the Authelia instance could approve a Device
+Authorization QR code and end up logged in as the Linux user who triggered it — the OAuth2 token endpoint has no
+notion of "which local account asked for this code". `pam_authelia` closes that gap by verifying the issued token
+against the requesting PAM username before returning success.
+
+After the Device Authorization token endpoint returns, the Go helper:
+
+1. Runs OIDC discovery against the configured Authelia URL and fetches the JWKs document.
+2. Verifies the ID token's signature, issuer, audience (`oauth2-client-id`), and expiry.
+3. Calls `/userinfo` with the access token over Bearer auth.
+4. Asserts that `userinfo.sub == id_token.sub` (token substitution defense).
+5. Looks up the `authelia.pam.username` claim in the userinfo response and **case-sensitively** compares it to the
+   requesting Linux username. Anything else — missing claim, wrong type, mismatched value — fails closed.
+
+Authelia is responsible for emitting that claim. Define a claims policy that anchors `authelia.pam.username` to
+your backend's username attribute, expose it via a custom scope, and grant the scope to the pam_authelia client:
+
+```yaml
+identity_providers:
+  oidc:
+    claims_policies:
+      pam:
+        custom_claims:
+          authelia.pam.username:
+            attribute: 'username'
+    scopes:
+      authelia.pam:
+        claims:
+          - 'authelia.pam.username'
+    clients:
+      - client_id: 'pam_authelia'
+        # ...existing client config...
+        claims_policy: 'pam'
+        scopes:
+          - 'openid'
+          - 'authelia.pam'
+```
+
+The matching PAM-side scope is `oauth2-scope=openid,authelia.pam`.
+
+#### Case sensitivity and username normalisation
+
+The comparison is **case-sensitive** — Linux usernames are. If your Authelia identity store holds usernames in a
+shape that doesn't match the Linux account verbatim (mixed case, an `@realm` suffix, an email, …), normalise on
+the Authelia side before the claim is emitted. The cleanest path is to define a derived attribute via Authelia's
+expression engine and anchor the claim at that derived attribute instead of the raw `username`:
+
+```yaml
+definitions:
+  user_attributes:
+    pam_username:
+      expression: 'username.lowerAscii()'
+
+identity_providers:
+  oidc:
+    claims_policies:
+      pam:
+        custom_claims:
+          authelia.pam.username:
+            attribute: 'pam_username'
+```
+
+Strip an `@domain` suffix the same way:
+
+```yaml
+definitions:
+  user_attributes:
+    pam_username:
+      expression: 'username.split("@")[0].lowerAscii()'
+```
+
+Any expression supported by Authelia's `user_attributes` works — substitute a per-user override, concatenate
+fields, etc. As long as the value resolves to the local Linux account verbatim, the bind succeeds.
 
 ## Contributing
 
