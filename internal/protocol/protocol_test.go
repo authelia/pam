@@ -84,11 +84,11 @@ func TestWritePromptMultiVisible(t *testing.T) {
 		name string
 		text string
 	}{
-		{"empty", ""},
-		{"single line", "hello"},
-		{"multiline", "line one\nline two\nline three"},
-		{"trailing newlines", "body\n\n"},
-		{"binary-ish", "bytes\x00\x01\x02\xff"},
+		{"Empty", ""},
+		{"SingleLine", "hello"},
+		{"Multiline", "line one\nline two\nline three"},
+		{"TrailingNewlines", "body\n\n"},
+		{"BinaryIsh", "bytes\x00\x01\x02\xff"},
 	}
 
 	for _, tt := range tests {

@@ -26,40 +26,40 @@ func TestValidateVerificationURL(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "matching host",
+			name: "MatchingHost",
 			raw:  "https://auth.example.com/consent/openid/device-authorization?user_code=ABCD1234",
 		},
 		{
-			name: "matching host, case-insensitive",
+			name: "MatchingHostCaseInsensitive",
 			raw:  "https://AUTH.example.com/consent",
 		},
 		{
-			name:    "empty",
+			name:    "Empty",
 			raw:     "",
 			wantErr: true,
 		},
 		{
-			name:    "http scheme",
+			name:    "HTTPScheme",
 			raw:     "http://auth.example.com/consent",
 			wantErr: true,
 		},
 		{
-			name:    "different host",
+			name:    "DifferentHost",
 			raw:     "https://evil.example.com/consent",
 			wantErr: true,
 		},
 		{
-			name:    "subdomain spoof",
+			name:    "SubdomainSpoof",
 			raw:     "https://auth.example.com.evil.io/consent",
 			wantErr: true,
 		},
 		{
-			name:    "javascript scheme",
+			name:    "JavaScriptScheme",
 			raw:     "javascript:alert(1)",
 			wantErr: true,
 		},
 		{
-			name:    "huge url",
+			name:    "HugeURL",
 			raw:     "https://auth.example.com/" + strings.Repeat("a", maxVerificationURLLength),
 			wantErr: true,
 		},

@@ -182,7 +182,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 		errSubstr string
 	}{
 		{
-			name: "missing access token",
+			name: "MissingAccessToken",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": testUsername})
 
@@ -191,7 +191,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: "no access token",
 		},
 		{
-			name: "missing id token",
+			name: "MissingIDToken",
 			mutate: func(o *oidcTestServer, _ map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": testUsername})
 
@@ -200,7 +200,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: "no id token",
 		},
 		{
-			name: "missing pam username",
+			name: "MissingPAMUsername",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": testUsername})
 
@@ -209,7 +209,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: "missing pam username",
 		},
 		{
-			name: "wrong audience",
+			name: "WrongAudience",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": testUsername})
 				claims["aud"] = "some-other-client"
@@ -219,7 +219,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: "id token verification failed",
 		},
 		{
-			name: "expired id token",
+			name: "ExpiredIDToken",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": testUsername})
 				claims["exp"] = time.Now().Add(-1 * time.Hour).Unix()
@@ -229,7 +229,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: "id token verification failed",
 		},
 		{
-			name: "wrong issuer",
+			name: "WrongIssuer",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": testUsername})
 				claims["iss"] = "https://attacker.example.com"
@@ -239,7 +239,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: "id token verification failed",
 		},
 		{
-			name: "tampered signature",
+			name: "TamperedSignature",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": testUsername})
 
@@ -260,7 +260,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: "id token verification failed",
 		},
 		{
-			name: "userinfo subject mismatch",
+			name: "UserInfoSubjectMismatch",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": "different-sub", "authelia.pam.username": testUsername})
 
@@ -269,7 +269,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: "does not match id token subject",
 		},
 		{
-			name: "claim missing",
+			name: "ClaimMissing",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject})
 
@@ -278,7 +278,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: `claim "authelia.pam.username" missing`,
 		},
 		{
-			name: "claim wrong type",
+			name: "ClaimWrongType",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": 42})
 
@@ -287,7 +287,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: `not a string`,
 		},
 		{
-			name: "claim empty",
+			name: "ClaimEmpty",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": ""})
 
@@ -296,7 +296,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: "is empty",
 		},
 		{
-			name: "username mismatch",
+			name: "UsernameMismatch",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": "jane"})
 
@@ -305,7 +305,7 @@ func TestVerifyDeviceIdentityFailures(t *testing.T) {
 			errSubstr: `"jane" does not match pam username "john"`,
 		},
 		{
-			name: "case-sensitive mismatch",
+			name: "CaseSensitiveMismatch",
 			mutate: func(o *oidcTestServer, claims map[string]any) (string, string, string) {
 				o.setUserInfo(map[string]any{"sub": testSubject, "authelia.pam.username": "John"})
 

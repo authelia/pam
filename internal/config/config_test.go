@@ -13,47 +13,47 @@ func TestParse(t *testing.T) {
 		wantURL   string
 	}{
 		{
-			name:      "valid full config",
+			name:      "ValidFullConfig",
 			args:      []string{"--url", "https://auth.example.com", "--auth-level", "1FA+2FA", "--cookie-name", "my_session", "--timeout", "60"},
 			wantErr:   false,
 			wantLevel: AuthLevel1FA2FA,
 			wantURL:   "https://auth.example.com",
 		},
 		{
-			name:      "valid 1fa only",
+			name:      "Valid1FAOnly",
 			args:      []string{"--url", "https://auth.example.com", "--auth-level", "1FA"},
 			wantErr:   false,
 			wantLevel: AuthLevel1FA,
 		},
 		{
-			name:      "valid 2fa only",
+			name:      "Valid2FAOnly",
 			args:      []string{"--url", "https://auth.example.com", "--auth-level", "2FA"},
 			wantErr:   false,
 			wantLevel: AuthLevel2FA,
 		},
 		{
-			name:      "defaults",
+			name:      "Defaults",
 			args:      []string{"--url", "https://auth.example.com"},
 			wantErr:   false,
 			wantLevel: AuthLevel1FA2FA,
 		},
 		{
-			name:    "missing url",
+			name:    "MissingURL",
 			args:    []string{"--auth-level", "1FA"},
 			wantErr: true,
 		},
 		{
-			name:    "http not allowed",
+			name:    "HTTPNotAllowed",
 			args:    []string{"--url", "http://auth.example.com"},
 			wantErr: true,
 		},
 		{
-			name:    "invalid auth level",
+			name:    "InvalidAuthLevel",
 			args:    []string{"--url", "https://auth.example.com", "--auth-level", "3FA"},
 			wantErr: true,
 		},
 		{
-			name:    "invalid timeout",
+			name:    "InvalidTimeout",
 			args:    []string{"--url", "https://auth.example.com", "--timeout", "0"},
 			wantErr: true,
 		},
@@ -89,18 +89,18 @@ func TestParseOAuth2Scope(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"default", "openid,authelia.pam", "openid authelia.pam", false},
-		{"with profile", "openid,profile,authelia.pam", "openid profile authelia.pam", false},
-		{"many", "openid,profile,email,groups,authelia.pam", "openid profile email groups authelia.pam", false},
-		{"trimmed whitespace", " openid , authelia.pam ", "openid authelia.pam", false},
-		{"repeated commas", "openid,,,authelia.pam", "openid authelia.pam", false},
-		{"missing openid", "profile,authelia.pam", "", true},
-		{"missing pam scope", "openid", "", true},
-		{"missing pam scope with profile", "openid,profile", "", true},
-		{"missing both", "profile,email", "", true},
-		{"empty", "", "", true},
-		{"only commas", ",,,", "", true},
-		{"only whitespace", "   ", "", true},
+		{"Default", "openid,authelia.pam", "openid authelia.pam", false},
+		{"WithProfile", "openid,profile,authelia.pam", "openid profile authelia.pam", false},
+		{"Many", "openid,profile,email,groups,authelia.pam", "openid profile email groups authelia.pam", false},
+		{"TrimmedWhitespace", " openid , authelia.pam ", "openid authelia.pam", false},
+		{"RepeatedCommas", "openid,,,authelia.pam", "openid authelia.pam", false},
+		{"MissingOpenID", "profile,authelia.pam", "", true},
+		{"MissingPAMScope", "openid", "", true},
+		{"MissingPAMScopeWithProfile", "openid,profile", "", true},
+		{"MissingBoth", "profile,email", "", true},
+		{"Empty", "", "", true},
+		{"OnlyCommas", ",,,", "", true},
+		{"OnlyWhitespace", "   ", "", true},
 	}
 
 	for _, tt := range tests {
@@ -124,13 +124,13 @@ func TestParseMethodPriority(t *testing.T) {
 		want    []string
 		wantErr bool
 	}{
-		{"empty", "", nil, false},
-		{"single totp", "totp", []string{"totp"}, false},
-		{"multi", "device_authorization,user", []string{"device_authorization", "user"}, false},
-		{"trimmed", " totp , user ", []string{"totp", "user"}, false},
-		{"invalid method", "totp,bogus", nil, true},
-		{"unknown only", "nope", nil, true},
-		{"all valid", "totp,mobile_push,device_authorization,user", []string{"totp", "mobile_push", "device_authorization", "user"}, false},
+		{"Empty", "", nil, false},
+		{"SingleTOTP", "totp", []string{"totp"}, false},
+		{"Multi", "device_authorization,user", []string{"device_authorization", "user"}, false},
+		{"Trimmed", " totp , user ", []string{"totp", "user"}, false},
+		{"InvalidMethod", "totp,bogus", nil, true},
+		{"UnknownOnly", "nope", nil, true},
+		{"AllValid", "totp,mobile_push,device_authorization,user", []string{"totp", "mobile_push", "device_authorization", "user"}, false},
 	}
 
 	for _, tt := range tests {
