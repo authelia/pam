@@ -10,6 +10,13 @@ import (
 	"github.com/boombuler/barcode/qr"
 )
 
+const (
+	fullBlock  = "█"
+	upperHalf  = "▀"
+	lowerHalf  = "▄"
+	emptyBlock = " "
+)
+
 // Render encodes payload as a Unicode half-block QR code with a one-module quiet
 // zone, suitable for terminal display.
 func Render(payload string) (string, error) {
@@ -31,13 +38,13 @@ func Render(payload string) (string, error) {
 
 			switch {
 			case top && bot:
-				b.WriteString("\u2588") // Full block.
+				b.WriteString(fullBlock)
 			case top:
-				b.WriteString("\u2580") // Upper half.
+				b.WriteString(upperHalf)
 			case bot:
-				b.WriteString("\u2584") // Lower half.
+				b.WriteString(lowerHalf)
 			default:
-				b.WriteString(" ")
+				b.WriteString(emptyBlock)
 			}
 		}
 
@@ -47,8 +54,6 @@ func Render(payload string) (string, error) {
 	return b.String(), nil
 }
 
-// moduleOn reports whether the QR module at (x, y) is set; out-of-range
-// coordinates (the quiet zone) return false.
 func moduleOn(code barcode.Barcode, x, y, size int) bool {
 	if x < 0 || y < 0 || x >= size || y >= size {
 		return false

@@ -381,10 +381,10 @@ identity_providers:
 
 The matching PAM-side scope is `oauth2-scope=openid,authelia.pam`.
 
-#### Case sensitivity and username normalisation
+#### Case sensitivity and username normalization
 
 The comparison is **case-sensitive** — Linux usernames are. If your Authelia identity store holds usernames in a
-shape that doesn't match the Linux account verbatim (mixed case, an `@realm` suffix, an email, …), normalise on
+shape that doesn't match the Linux account verbatim (mixed case, an `@realm` suffix, an email, …), normalize on
 the Authelia side before the claim is emitted. The cleanest path is to define a derived attribute via Authelia's
 expression engine and anchor the claim at that derived attribute instead of the raw `username`:
 

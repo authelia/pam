@@ -768,10 +768,24 @@ cleanup:
 	close(pipe_to_child[1]);
 	close(pipe_from_child[0]);
 
-	/* Wait for child or kill it on timeout. */
+	/* Wait for child, escalating to SIGKILL if SIGTERM is ignored. */
 	if (waitpid(child, &status, WNOHANG) == 0) {
 		kill(child, SIGTERM);
-		waitpid(child, &status, 0);
+
+		int reaped = 0;
+		for (int i = 0; i < 30; i++) {
+			if (waitpid(child, &status, WNOHANG) != 0) {
+				reaped = 1;
+				break;
+			}
+			struct timespec ts = { .tv_sec = 0, .tv_nsec = 100L * 1000L * 1000L };
+			nanosleep(&ts, NULL);
+		}
+
+		if (!reaped) {
+			kill(child, SIGKILL);
+			waitpid(child, &status, 0);
+		}
 	}
 
 	secure_clear(line, sizeof(line));

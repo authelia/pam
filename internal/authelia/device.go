@@ -84,8 +84,6 @@ type DeviceTokenResponse struct {
 	Error       string `json:"error"`
 }
 
-// maxPollInterval caps the slow_down backoff so a hostile or misbehaving server
-// can't stall the auth flow indefinitely.
 const maxPollInterval = 60
 
 // PollDeviceToken polls the token endpoint until approved, denied, or expired.
@@ -129,9 +127,6 @@ func (c *Client) PollDeviceToken(clientID, clientSecret, deviceCode string, expi
 	}
 }
 
-// pollDeviceTokenOnce makes a single device token request and classifies the
-// response. A non-nil result means the grant succeeded; a nil result with no
-// error means the caller should keep polling.
 func (c *Client) pollDeviceTokenOnce(clientID, clientSecret, deviceCode string) (result *DeviceTokenResponse, slowDown bool, err error) {
 	c.Debugf("POST %s/api/oidc/token", c.baseURL)
 

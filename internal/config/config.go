@@ -123,11 +123,6 @@ func Parse(args []string) (*Config, error) {
 	}, nil
 }
 
-// parseOAuth2Scope converts the comma-separated PAM argument to the space-separated
-// form required by the OAuth2 Device Authorization endpoint. Both "openid" (for
-// the ID token) and the authelia.PAMScope (which grants the username claim) are
-// mandatory — without them the device-flow identity cannot be bound to the PAM
-// username.
 func parseOAuth2Scope(raw string) (string, error) {
 	parts := strings.Split(raw, ",")
 	scopes := make([]string, 0, len(parts))

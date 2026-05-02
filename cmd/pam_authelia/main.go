@@ -16,13 +16,8 @@ import (
 	"github.com/authelia/pam/internal/qr"
 )
 
-// maxVerificationURLLength bounds the verification URL before QR rendering; sits
-// below the 2953-byte byte-mode QR v40 limit.
 const maxVerificationURLLength = 2048
 
-// setupLogging routes the standard log package through syslog (LOG_AUTH), the
-// canonical channel for PAM modules — sshd closes stderr after log_init so this
-// is the only path that reliably reaches journald. Falls back to prefixed stderr.
 func setupLogging() {
 	log.SetFlags(0)
 
@@ -44,8 +39,6 @@ func main() {
 	}
 }
 
-// genericAuthFailure is the user-visible message for all auth failures; detail
-// stays in the debug log to avoid leaking server state to the SSH client.
 const genericAuthFailure = "Authentication failed."
 
 func run() error {
@@ -88,7 +81,6 @@ func run() error {
 		return writeFailure(client, writer, fmt.Sprintf("failed to read password from shim: %v", err), genericAuthFailure)
 	}
 
-	// Device flow is self-contained — performDeviceAuth enforces its own identity binding, so skip 1FA + user info.
 	if len(cfg.MethodPriority) > 0 && cfg.MethodPriority[0] == authelia.MethodDeviceAuth && cfg.OAuth2ClientID != "" {
 		if err = performDeviceAuth(cfg, client, username, reader, writer); err != nil {
 			return writeFailure(client, writer, err.Error(), genericAuthFailure)
@@ -117,8 +109,6 @@ func run() error {
 	return protocol.WriteSuccess(writer)
 }
 
-// pickSecondFactorMethod returns the first usable method from cfg.MethodPriority,
-// falling back to the user's Authelia preference when the priority list is empty.
 func pickSecondFactorMethod(cfg *config.Config, client *authelia.Client, userInfo *authelia.UserInfoResponse) (string, error) {
 	priority := cfg.MethodPriority
 	if len(priority) == 0 {
@@ -139,9 +129,6 @@ func pickSecondFactorMethod(cfg *config.Config, client *authelia.Client, userInf
 	return "", fmt.Errorf("no usable 2FA method for this user")
 }
 
-// resolveMethod maps a priority entry to a concrete 2FA method. "user" resolves
-// to the user's Authelia preference; webauthn falls back to TOTP/Duo/device flow
-// since it cannot respond over SSH.
 func resolveMethod(entry string, cfg *config.Config, userInfo *authelia.UserInfoResponse) string {
 	if entry != authelia.MethodUser {
 		return entry
@@ -164,7 +151,6 @@ func resolveMethod(entry string, cfg *config.Config, userInfo *authelia.UserInfo
 	return pref
 }
 
-// methodUsable reports whether the given method can be used for the current user.
 func methodUsable(method string, cfg *config.Config, userInfo *authelia.UserInfoResponse) bool {
 	switch method {
 	case authelia.MethodTOTP:
@@ -216,11 +202,6 @@ func performTOTP(client *authelia.Client, reader *bufio.Reader, writer *os.File)
 	return client.SecondFactorTOTP(token)
 }
 
-// performDeviceAuth runs the OAuth2 device-authorization flow. The QR is sent
-// via PAM_PROMPT_ECHO_ON to bypass BSD vis(3) sanitisation of PAM_TEXT_INFO;
-// the user must press Enter after approving before polling resumes. The issued
-// token is then bound to the PAM username via VerifyDeviceIdentity — without
-// that check, any Authelia user could approve the QR and log in as someone else.
 func performDeviceAuth(cfg *config.Config, client *authelia.Client, username string, reader *bufio.Reader, writer *os.File) error {
 	if cfg.OAuth2ClientID == "" {
 		return fmt.Errorf("device authorization requires --oauth2-client-id")
@@ -275,9 +256,6 @@ func performDeviceAuth(cfg *config.Config, client *authelia.Client, username str
 	return client.VerifyDeviceIdentity(ctx, cfg.OAuth2ClientID, accessToken, idToken, username)
 }
 
-// validateVerificationURL requires the URL to be https, under the configured
-// Authelia host, and within maxVerificationURLLength — preventing a tampered
-// response from phishing the user via an attacker-controlled QR target.
 func validateVerificationURL(raw string, expected *url.URL) error {
 	if raw == "" {
 		return fmt.Errorf("empty URL")
@@ -311,9 +289,6 @@ func performDuoPush(client *authelia.Client, writer *os.File) error {
 	return client.SecondFactorDuoPush()
 }
 
-// writeFailure logs the full internal message via syslog and sends only
-// userFacing over the protocol pipe. Returned error carries the internal detail
-// for propagation.
 func writeFailure(client *authelia.Client, writer *os.File, internal, userFacing string) error {
 	log.Printf("%s", internal)
 
