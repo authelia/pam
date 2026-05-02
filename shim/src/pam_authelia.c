@@ -82,6 +82,10 @@ authelia_pam_prompt(pam_handle_t *pamh, int msg_style, const char *prompt_text, 
 	struct pam_response *resp = NULL;
 	int ret;
 
+	if (response != NULL) {
+		*response = NULL;
+	}
+
 	ret = pam_get_item(pamh, PAM_CONV, (const void **)&conv);
 	if (ret != PAM_SUCCESS || conv == NULL || conv->conv == NULL) {
 		return PAM_CONV_ERR;
@@ -92,31 +96,22 @@ authelia_pam_prompt(pam_handle_t *pamh, int msg_style, const char *prompt_text, 
 	msg.msg = (char *)prompt_text;
 
 	ret = conv->conv(1, &msgp, &resp, conv->appdata_ptr);
-	if (ret != PAM_SUCCESS) {
-		if (resp != NULL) {
-			if (resp->resp != NULL) {
-				secure_clear(resp->resp, strlen(resp->resp));
-				free(resp->resp);
-			}
-			free(resp);
-		}
-		return ret;
-	}
 
-	if (response != NULL) {
-		if (resp != NULL && resp->resp != NULL) {
-			*response = resp->resp;
-			resp->resp = NULL; /* Transfer ownership. */
-		} else {
-			*response = NULL;
-		}
+	if (ret == PAM_SUCCESS && response != NULL && resp != NULL && resp->resp != NULL) {
+		*response = resp->resp;
+		resp->resp = NULL;
 	}
 
 	if (resp != NULL) {
+		if (resp->resp != NULL) {
+			secure_clear(resp->resp, strlen(resp->resp));
+			free(resp->resp);
+			resp->resp = NULL;
+		}
 		free(resp);
 	}
 
-	return PAM_SUCCESS;
+	return ret;
 }
 
 /* -------------------------------------------------------------------------- */
