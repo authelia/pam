@@ -1,0 +1,13 @@
+---
+# This represents the hardcoded pipeline set in Buildkite which executes the repo
+# provided dynamic pipeline. It exists to gate insecure code from external PRs
+# behind a maintainer approval, mirroring the authelia/authelia setup.
+steps:
+  # Manual intervention by team required to deploy for forked PRs (prevent secret leakage).
+  - block: "Public fork needs approval"
+    if: build.pull_request.repository.fork == true
+
+  # Pipeline for all others (tagged commits/local branches/PRs).
+  - label: ":pipeline: Setup Pipeline"
+    command: ".buildkite/pipeline.sh | buildkite-agent pipeline upload"
+...

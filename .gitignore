@@ -1,0 +1,33 @@
+# Go helper binary produced by `go build ./cmd/pam_authelia` at the repo root.
+/pam_authelia
+
+# Go test and coverage artifacts.
+*.test
+*.out
+coverage.html
+
+# C shim compiled artifacts.
+shim/src/*.o
+shim/pam_authelia.so
+shim/pam_authelia.dylib
+
+# Cross-compiled shim output from shim/build-all.sh.
+/shim/dist/
+
+# GoReleaser output (dist: goreleaser in .goreleaser.yml).
+/goreleaser/
+/dist/
+
+# Release artifacts flattened to repo root by the pre-artifact buildkite hook
+# (.buildkite/hooks/pre-artifact) after GoReleaser runs.
+/pam_authelia*.tar.gz
+/pam_authelia*.tar.gz.cdx.json
+/pam_authelia*.tar.gz.spdx.json
+/pam_authelia*.deb
+/checksums*
+
+# GoReleaser metadata files moved alongside the release artifacts by the
+# wholesale `mv goreleaser/* ./` in pre-artifact. Not uploaded to the release.
+/artifacts.json
+/metadata.json
+/config.yaml

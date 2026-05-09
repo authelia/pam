@@ -1,0 +1,32 @@
+---
+changelog:
+  exclude:
+    authors:
+      - dependabot
+      - dependabot[bot]
+      - renovate-bot
+      - renovate[bot]
+  categories:
+    - title: Features
+      labels:
+        - feature
+    - title: Bug Fixes
+      labels:
+        - fix
+    - title: Performance
+      labels:
+        - performance
+    - title: Refactors
+      labels:
+        - refactor
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Build & CI
+      labels:
+        - build
+        - ci
+    - title: Other Changes
+      labels:
+        - "*"
+...
