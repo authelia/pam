@@ -50,6 +50,9 @@ steps:
 
   - label: ":hammer_and_wrench: Build & Test"
     command: "build.sh"
+    retry:
+      manual:
+        permit_on_passed: true
     agents:
       build: "unit-test"
     artifact_paths:
