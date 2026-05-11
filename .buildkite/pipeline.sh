@@ -59,11 +59,10 @@ steps:
       - "*.{c,sp}dx.json"
     key: "build"
     if: build.env("CI_BYPASS") != "true"
+
 EOF
 
-if [[ -n "${BUILDKITE_TAG:-}" ]]; then
 cat << EOF
-
   - label: ":github: Deploy Artifacts"
     command: "ghartifacts.sh"
     depends_on:
@@ -89,4 +88,3 @@ cat << EOF
       upload: "fast"
     if: build.tag != null && build.env("CI_BYPASS") != "true"
 EOF
-fi
