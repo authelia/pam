@@ -67,11 +67,25 @@ nfpms:
     release: "1"
     section: admin
     priority: optional
-    contents:
-      - src: 'shim/dist/linux-{{ .Arch }}-glibc/pam_authelia.so'
-        dst: /lib/security/pam_authelia.so
-        file_info:
-          mode: 0644  # yamllint disable-line rule:octal-values
+    overrides:
+      amd64:
+        contents:
+          - src: 'shim/dist/linux-amd64-glibc/pam_authelia.so'
+            dst: /usr/lib/x86_64-linux-gnu/security/pam_authelia.so
+            file_info:
+              mode: 0644  # yamllint disable-line rule:octal-values
+      arm64:
+        contents:
+          - src: 'shim/dist/linux-arm64-glibc/pam_authelia.so'
+            dst: /usr/lib/aarch64-linux-gnu/security/pam_authelia.so
+            file_info:
+              mode: 0644  # yamllint disable-line rule:octal-values
+      arm:
+        contents:
+          - src: 'shim/dist/linux-arm-glibc/pam_authelia.so'
+            dst: /usr/lib/arm-linux-gnueabihf/security/pam_authelia.so
+            file_info:
+              mode: 0644  # yamllint disable-line rule:octal-values
     deb:
       signature:
         key_file: '{{ .Env.GPG_KEY_PATH }}'
