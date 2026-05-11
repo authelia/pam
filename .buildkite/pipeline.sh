@@ -59,11 +59,10 @@ steps:
       - "*.{c,sp}dx.json"
     key: "build"
     if: build.env("CI_BYPASS") != "true"
+
 EOF
 
-if [[ -n "${BUILDKITE_TAG:-}" ]]; then
 cat << EOF
-
   - label: ":github: Deploy Artifacts"
     command: "ghartifacts.sh"
     depends_on:
@@ -73,6 +72,10 @@ cat << EOF
     agents:
       upload: "fast"
     key: "artifacts"
+    if: build.tag != null && build.env("CI_BYPASS") != "true"
+
+  - label: ":linux: Deploy AUR"
+    command: "aurpackages.sh | buildkite-agent pipeline upload"
     if: build.tag != null && build.env("CI_BYPASS") != "true"
 
   - label: ":debian: :fedora: :ubuntu: Deploy APT"
@@ -85,4 +88,3 @@ cat << EOF
       upload: "fast"
     if: build.tag != null && build.env("CI_BYPASS") != "true"
 EOF
-fi
