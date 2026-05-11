@@ -75,6 +75,10 @@ cat << EOF
     key: "artifacts"
     if: build.tag != null && build.env("CI_BYPASS") != "true"
 
+  - label: ":linux: Deploy AUR"
+    command: "aurpackages.sh | buildkite-agent pipeline upload"
+    if: build.tag != null && build.env("CI_BYPASS") != "true"
+
   - label: ":debian: :fedora: :ubuntu: Deploy APT"
     command: "aptdeploy.sh"
     depends_on:
