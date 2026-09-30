@@ -6,7 +6,7 @@
     ":separatePatchReleases",
     "helpers:pinGitHubActionDigests"
   ],
-  "branchPrefix": "renovate-",
+  "branchPrefixOld": "renovate-",
   "rebaseWhen": "conflicted",
   "ignorePresets": [
     ":prHourlyLimit2",
