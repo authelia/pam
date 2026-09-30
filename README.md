@@ -2,9 +2,22 @@
   <img src="https://www.authelia.com/images/authelia-title.png" width="350" title="Authelia">
 </p>
 
-  [![License](https://img.shields.io/github/license/authelia/pam?logo=apache&style=flat-square&color=blue)][Apache 2.0]
-  [![Discord](https://img.shields.io/discord/707844280412012608?label=discord&logo=discord&style=flat-square&color=blue)](https://discord.authelia.com)
-  [![Matrix](https://img.shields.io/matrix/authelia-support:matrix.org?label=matrix&logo=matrix&style=flat-square&color=blue)](https://matrix.to/#/#support:authelia.com)
+<p align="center">
+  <a href="https://buildkite.com/authelia/pam"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Fbuildkite%2F2eeb94037502beb36b34d7cd41359b7f4b628d063dd3133141%2Fmaster.json&query=%24.message&label=build&logo=buildkite&logoColor=%2314cc80&mode=dark&size=sm&variant=outline"><img alt="Build" src="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Fbuildkite%2F2eeb94037502beb36b34d7cd41359b7f4b628d063dd3133141%2Fmaster.json&query=%24.message&label=build&logo=buildkite&logoColor=%2314cc80&mode=light&size=sm&variant=outline"></picture></a>
+  <a href="https://www.apache.org/licenses/LICENSE-2.0"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/authelia/pam/license.svg?logo=apache&logoColor=%23d22128&mode=dark&size=sm&variant=outline"><img alt="License" src="https://shieldcn.dev/github/authelia/pam/license.svg?logo=apache&logoColor=%23d22128&mode=light&size=sm&variant=outline"></picture></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/authelia/pam/releases"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/authelia/pam/release.svg?logo=github&mode=dark&size=sm&variant=outline"><img alt="GitHub Release" src="https://shieldcn.dev/github/authelia/pam/release.svg?logo=github&logoColor=%23181717&mode=light&size=sm&variant=outline"></picture></a>
+  <a href="https://aur.archlinux.org/packages/pam_authelia/"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Faur%2Fversion%2Fpam_authelia.json&query=%24.message&label=pam_authelia&logo=archlinux&logoColor=%231793d1&mode=dark&size=sm&variant=outline"><img alt="AUR source version" src="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Faur%2Fversion%2Fpam_authelia.json&query=%24.message&label=pam_authelia&logo=archlinux&logoColor=%231793d1&mode=light&size=sm&variant=outline"></picture></a>
+  <a href="https://aur.archlinux.org/packages/pam_authelia-bin/"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Faur%2Fversion%2Fpam_authelia-bin.json&query=%24.message&label=pam_authelia-bin&logo=archlinux&logoColor=%231793d1&mode=dark&size=sm&variant=outline"><img alt="AUR binary version" src="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Faur%2Fversion%2Fpam_authelia-bin.json&query=%24.message&label=pam_authelia-bin&logo=archlinux&logoColor=%231793d1&mode=light&size=sm&variant=outline"></picture></a>
+  <a href="https://aur.archlinux.org/packages/pam_authelia-git/"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Faur%2Fversion%2Fpam_authelia-git.json&query=%24.message&label=pam_authelia-git&logo=archlinux&logoColor=%231793d1&mode=dark&size=sm&variant=outline"><img alt="AUR development version" src="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Faur%2Fversion%2Fpam_authelia-git.json&query=%24.message&label=pam_authelia-git&logo=archlinux&logoColor=%231793d1&mode=light&size=sm&variant=outline"></picture></a>
+</p>
+
+<p align="center">
+  <a href="https://discord.authelia.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/discord/707844280412012608.svg?logo=discord&logoColor=%235865f2&mode=dark&size=sm&variant=outline"><img alt="Discord" src="https://shieldcn.dev/discord/707844280412012608.svg?logo=discord&logoColor=%235865f2&mode=light&size=sm&variant=outline"></picture></a>
+  <a href="https://matrix.to/#/#support:authelia.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Fmatrix%2Fauthelia-support%3Amatrix.org.json&query=%24.message&label=matrix&logo=matrix&mode=dark&size=sm&variant=outline"><img alt="Matrix" src="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fimg.shields.io%2Fmatrix%2Fauthelia-support%3Amatrix.org.json&query=%24.message&label=matrix&logo=matrix&mode=light&size=sm&variant=outline"></picture></a>
+</p>
 
 # pam_authelia
 
@@ -30,7 +43,7 @@ authorization), or any combination of the two, with a configurable method prefer
                        │  │   • PAM conv (prompts/info)  │   │
                        │  │   • forks helper             │   │
                        │  └──────────┬───────────────────┘   │
-                       │             │ pipe                   │
+                       │             │ pipe                  │
                        │  ┌──────────▼───────────────────┐   │
                        │  │   pam_authelia (Go helper)   │   │
                        │  │   /usr/bin/                  │   │
@@ -41,8 +54,8 @@ authorization), or any combination of the two, with a configurable method prefer
                        └─────────────┼─────────────────────┬─┘
                                      │                     │
                                      ▼                     │
-                            ┌─────────────────┐           │
-                            │  Authelia API   │◄──────────┘
+                            ┌─────────────────┐            │
+                            │  Authelia API   │◄───────────┘
                             │  (HTTPS only)   │
                             └─────────────────┘
 ```
@@ -425,5 +438,3 @@ Issues and pull requests are welcome at <https://github.com/authelia/pam>. Commi
 ## License
 
 [Apache License 2.0](LICENSE).
-
-[Apache 2.0]: https://www.apache.org/licenses/LICENSE-2.0
