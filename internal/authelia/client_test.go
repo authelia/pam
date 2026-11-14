@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -12,14 +13,6 @@ const (
 	testSessionID  = "test-session-id"
 	testCookieName = "authelia_session"
 )
-
-func newTestClient(srv *httptest.Server) *Client {
-	return &Client{
-		client:     srv.Client(),
-		baseURL:    srv.URL,
-		cookieName: testCookieName,
-	}
-}
 
 func TestFirstFactorSuccess(t *testing.T) {
 	mux := http.NewServeMux()
@@ -117,6 +110,7 @@ func TestSecondFactorTOTPSuccess(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
+	client.sessionCookieName = testCookieName
 	client.sessionCookie = testSessionID
 
 	if err := client.SecondFactorTOTP("123456"); err != nil {
@@ -135,6 +129,7 @@ func TestSecondFactorTOTPInvalidToken(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
+	client.sessionCookieName = testCookieName
 	client.sessionCookie = testSessionID
 
 	if err := client.SecondFactorTOTP("000000"); err == nil {
@@ -159,6 +154,7 @@ func TestUserInfo(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
+	client.sessionCookieName = testCookieName
 	client.sessionCookie = testSessionID
 
 	info, err := client.UserInfo()
@@ -196,6 +192,7 @@ func TestSecondFactorDuoPush(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
+	client.sessionCookieName = testCookieName
 	client.sessionCookie = testSessionID
 
 	if err := client.SecondFactorDuoPush(); err != nil {
@@ -213,6 +210,7 @@ func TestRateLimiting(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
+	client.sessionCookieName = testCookieName
 	client.sessionCookie = testSessionID
 
 	err := client.SecondFactorTOTP("123456")
@@ -259,4 +257,374 @@ func TestSpecialCharsInPassword(t *testing.T) {
 	if err := client.FirstFactor("user", `p@ss"word\with/special`); err != nil {
 		t.Fatalf("FirstFactor() with special chars: %v", err)
 	}
+}
+
+func TestPrefixedSessionAndCSRF(t *testing.T) {
+	cs := newCookieServer(t, "__Host-Http-authelia_session", "__Host-authelia_session_csrf")
+	client := cs.client(testCookieName)
+
+	if err := client.FirstFactor("user", "pass"); err != nil {
+		t.Fatalf("FirstFactor() unexpected error: %v", err)
+	}
+
+	if client.sessionCookieName != "__Host-Http-authelia_session" || client.sessionCookie != "session-1" || client.csrfToken != "csrf-1" {
+		t.Fatalf("after first factor: name=%q session=%q csrf=%q", client.sessionCookieName, client.sessionCookie, client.csrfToken)
+	}
+
+	if _, err := client.UserInfo(); err != nil {
+		t.Fatalf("UserInfo() unexpected error: %v", err)
+	}
+
+	if err := client.SecondFactorTOTP("123456"); err != nil {
+		t.Fatalf("SecondFactorTOTP() unexpected error: %v", err)
+	}
+
+	first := cs.requests[0]
+	if len(first.cookieNames) != 0 || first.hasCSRF {
+		t.Errorf("first factor: cookies=%v hasCSRF=%v, want none", first.cookieNames, first.hasCSRF)
+	}
+
+	totp := cs.requests[2]
+	if len(totp.cookieNames) != 1 || totp.cookieNames[0] != "__Host-Http-authelia_session" {
+		t.Errorf("totp cookies = %v, want [__Host-Http-authelia_session]", totp.cookieNames)
+	}
+
+	if totp.session != "session-1" || totp.csrfHeader != "csrf-1" {
+		t.Errorf("totp session=%q csrf=%q, want session-1/csrf-1", totp.session, totp.csrfHeader)
+	}
+}
+
+func TestLegacyServerWithoutCSRF(t *testing.T) {
+	cs := newCookieServer(t, testCookieName, "")
+	client := cs.client(testCookieName)
+
+	if err := client.FirstFactor("user", "pass"); err != nil {
+		t.Fatalf("FirstFactor() unexpected error: %v", err)
+	}
+
+	if _, err := client.UserInfo(); err != nil {
+		t.Fatalf("UserInfo() unexpected error: %v", err)
+	}
+
+	if err := client.SecondFactorTOTP("123456"); err != nil {
+		t.Fatalf("SecondFactorTOTP() unexpected error: %v", err)
+	}
+
+	if err := client.SecondFactorDuoPush(); err != nil {
+		t.Fatalf("SecondFactorDuoPush() unexpected error: %v", err)
+	}
+
+	for _, rec := range cs.requests {
+		if rec.hasCSRF {
+			t.Errorf("%s: unexpected %s header", rec.path, HeaderCSRFToken)
+		}
+
+		if rec.path != "/api/firstfactor" && (len(rec.cookieNames) != 1 || rec.cookieNames[0] != testCookieName) {
+			t.Errorf("%s: cookies = %v, want [%s]", rec.path, rec.cookieNames, testCookieName)
+		}
+	}
+
+	if client.sessionCookieName != testCookieName {
+		t.Errorf("sessionCookieName = %q, want %q", client.sessionCookieName, testCookieName)
+	}
+}
+
+func TestCSRFTokenRotation(t *testing.T) {
+	cs := newCookieServer(t, "__Host-Http-authelia_session", "__Host-authelia_session_csrf")
+	client := cs.client(testCookieName)
+
+	if err := client.FirstFactor("user", "pass"); err != nil {
+		t.Fatalf("FirstFactor() unexpected error: %v", err)
+	}
+
+	if err := client.SecondFactorTOTP("123456"); err != nil {
+		t.Fatalf("SecondFactorTOTP() unexpected error: %v", err)
+	}
+
+	if client.sessionCookie != "session-2" || client.csrfToken != "csrf-2" {
+		t.Fatalf("after rotation: session=%q csrf=%q, want session-2/csrf-2", client.sessionCookie, client.csrfToken)
+	}
+
+	if err := client.SecondFactorDuoPush(); err != nil {
+		t.Fatalf("SecondFactorDuoPush() after rotation: %v", err)
+	}
+
+	last := cs.requests[len(cs.requests)-1]
+	if last.session != "session-2" || last.csrfHeader != "csrf-2" {
+		t.Errorf("duo session=%q csrf=%q, want session-2/csrf-2", last.session, last.csrfHeader)
+	}
+}
+
+func TestCustomCookieNameDerivesPrefixedNames(t *testing.T) {
+	cs := newCookieServer(t, "__Host-Http-my_session", "__Host-my_session_csrf")
+	client := cs.client("my_session")
+
+	if err := client.FirstFactor("user", "pass"); err != nil {
+		t.Fatalf("FirstFactor() unexpected error: %v", err)
+	}
+
+	if err := client.SecondFactorTOTP("123456"); err != nil {
+		t.Fatalf("SecondFactorTOTP() unexpected error: %v", err)
+	}
+
+	if client.sessionCookieName != "__Host-Http-my_session" || client.csrfToken != "csrf-2" {
+		t.Errorf("name=%q csrf=%q, want __Host-Http-my_session/csrf-2", client.sessionCookieName, client.csrfToken)
+	}
+}
+
+func TestExtractCookiesDeletionThenNewValue(t *testing.T) {
+	client := &Client{cookieName: testCookieName}
+
+	extractFrom(t, client,
+		"__Host-Http-authelia_session=; Path=/; Max-Age=0; Secure; HttpOnly",
+		"__Host-Http-authelia_session=new-session; Path=/; Secure; HttpOnly",
+		"__Host-authelia_session_csrf=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure",
+		"__Host-authelia_session_csrf=new-csrf; Path=/; Secure",
+	)
+
+	if client.sessionCookieName != "__Host-Http-authelia_session" || client.sessionCookie != "new-session" || client.csrfToken != "new-csrf" {
+		t.Errorf("name=%q session=%q csrf=%q, want __Host-Http-authelia_session/new-session/new-csrf",
+			client.sessionCookieName, client.sessionCookie, client.csrfToken)
+	}
+}
+
+func TestExtractCookiesDeletionClears(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+	}{
+		{"empty value", "__Host-Http-authelia_session=; Path=/"},
+		{"max-age", "__Host-Http-authelia_session=x; Path=/; Max-Age=0"},
+		{"expired", "__Host-Http-authelia_session=x; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &Client{
+				cookieName:        testCookieName,
+				sessionCookieName: "__Host-Http-authelia_session",
+				sessionCookie:     "old",
+				csrfToken:         "old-csrf",
+			}
+
+			extractFrom(t, client, tc.header, strings.Replace(tc.header, "__Host-Http-authelia_session", "__Host-authelia_session_csrf", 1))
+
+			if client.sessionCookie != "" || client.sessionCookieName != "" || client.csrfToken != "" {
+				t.Errorf("name=%q session=%q csrf=%q, want all cleared", client.sessionCookieName, client.sessionCookie, client.csrfToken)
+			}
+		})
+	}
+}
+
+func TestExtractCookiesMaxAgeOverridesExpires(t *testing.T) {
+	client := &Client{cookieName: testCookieName}
+
+	extractFrom(t, client,
+		"__Host-Http-authelia_session=kept; Path=/; Max-Age=3600; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+		"__Host-authelia_session_csrf=kept-csrf; Path=/; Max-Age=3600; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+	)
+
+	if client.sessionCookieName != "__Host-Http-authelia_session" || client.sessionCookie != "kept" || client.csrfToken != "kept-csrf" {
+		t.Errorf("name=%q session=%q csrf=%q, want __Host-Http-authelia_session/kept/kept-csrf",
+			client.sessionCookieName, client.sessionCookie, client.csrfToken)
+	}
+}
+
+func TestExtractCookiesLastWins(t *testing.T) {
+	client := &Client{cookieName: testCookieName}
+
+	extractFrom(t, client,
+		"__Host-Http-authelia_session=first; Path=/",
+		"__Host-Http-authelia_session=second; Path=/",
+	)
+
+	if client.sessionCookie != "second" {
+		t.Errorf("sessionCookie = %q, want %q", client.sessionCookie, "second")
+	}
+}
+
+func TestExtractCookiesPrefersPrefixed(t *testing.T) {
+	client := &Client{cookieName: testCookieName}
+
+	extractFrom(t, client,
+		"__Host-Http-authelia_session=prefixed; Path=/",
+		"authelia_session=bare; Path=/",
+	)
+
+	if client.sessionCookieName != "__Host-Http-authelia_session" || client.sessionCookie != "prefixed" {
+		t.Errorf("name=%q session=%q, want __Host-Http-authelia_session/prefixed", client.sessionCookieName, client.sessionCookie)
+	}
+}
+
+func TestExtractCookiesIgnoresAuthzAndOtherNameDeletion(t *testing.T) {
+	client := &Client{
+		cookieName:        testCookieName,
+		sessionCookieName: testCookieName,
+		sessionCookie:     "legacy",
+	}
+
+	extractFrom(t, client,
+		"__Secure-authelia_session_authz=authz; Path=/",
+		"__Host-Http-authelia_session=; Path=/; Max-Age=0",
+	)
+
+	if client.sessionCookieName != testCookieName || client.sessionCookie != "legacy" || client.csrfToken != "" {
+		t.Errorf("name=%q session=%q csrf=%q, want legacy session untouched", client.sessionCookieName, client.sessionCookie, client.csrfToken)
+	}
+}
+
+func newTestClient(srv *httptest.Server) *Client {
+	return &Client{
+		client:     srv.Client(),
+		baseURL:    srv.URL,
+		cookieName: testCookieName,
+	}
+}
+
+type cookieServer struct {
+	t           *testing.T
+	srv         *httptest.Server
+	sessionName string
+	csrfName    string
+
+	session string
+	csrf    string
+
+	requests []recordedRequest
+}
+
+type recordedRequest struct {
+	path        string
+	cookieNames []string
+	session     string
+	csrfHeader  string
+	hasCSRF     bool
+}
+
+func newCookieServer(t *testing.T, sessionName, csrfName string) *cookieServer {
+	t.Helper()
+
+	cs := &cookieServer{t: t, sessionName: sessionName, csrfName: csrfName}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/firstfactor", func(w http.ResponseWriter, r *http.Request) {
+		cs.record(r)
+		cs.rotate(w, "1")
+		_, _ = fmt.Fprint(w, `{"status":"OK"}`)
+	})
+
+	mux.HandleFunc("/api/user/info", func(w http.ResponseWriter, r *http.Request) {
+		cs.record(r)
+
+		if !cs.authorized(r, false) {
+			w.WriteHeader(http.StatusForbidden)
+
+			return
+		}
+
+		_, _ = fmt.Fprint(w, `{"status":"OK","data":{"method":"totp","has_totp":true}}`)
+	})
+
+	mux.HandleFunc("/api/secondfactor/totp", func(w http.ResponseWriter, r *http.Request) {
+		cs.record(r)
+
+		if !cs.authorized(r, true) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"status":"KO"}`)
+
+			return
+		}
+
+		cs.rotate(w, "2")
+		_, _ = fmt.Fprint(w, `{"status":"OK"}`)
+	})
+
+	mux.HandleFunc("/api/secondfactor/duo", func(w http.ResponseWriter, r *http.Request) {
+		cs.record(r)
+
+		if !cs.authorized(r, true) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"status":"KO"}`)
+
+			return
+		}
+
+		_, _ = fmt.Fprint(w, `{"status":"OK"}`)
+	})
+
+	cs.srv = httptest.NewTLSServer(mux)
+	t.Cleanup(cs.srv.Close)
+
+	return cs
+}
+
+func (cs *cookieServer) rotate(w http.ResponseWriter, generation string) {
+	cs.session = "session-" + generation
+	http.SetCookie(w, &http.Cookie{Name: cs.sessionName, Value: cs.session, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+
+	if cs.csrfName != "" {
+		cs.csrf = "csrf-" + generation
+		http.SetCookie(w, &http.Cookie{Name: cs.csrfName, Value: cs.csrf, Path: "/", Secure: true, SameSite: http.SameSiteStrictMode})
+	}
+}
+
+func (cs *cookieServer) record(r *http.Request) {
+	cs.t.Helper()
+
+	for _, h := range []string{"Origin", "Referer", "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-User"} {
+		if v := r.Header.Get(h); v != "" {
+			cs.t.Errorf("%s %s: unexpected %s header %q", r.Method, r.URL.Path, h, v)
+		}
+	}
+
+	rec := recordedRequest{path: r.URL.Path}
+
+	for _, c := range r.Cookies() {
+		rec.cookieNames = append(rec.cookieNames, c.Name)
+
+		if c.Name == cs.sessionName {
+			rec.session = c.Value
+		}
+	}
+
+	_, rec.hasCSRF = r.Header[http.CanonicalHeaderKey(HeaderCSRFToken)]
+	rec.csrfHeader = r.Header.Get(HeaderCSRFToken)
+
+	cs.requests = append(cs.requests, rec)
+}
+
+func (cs *cookieServer) authorized(r *http.Request, stateChanging bool) bool {
+	c, err := r.Cookie(cs.sessionName)
+	if err != nil || c.Value != cs.session {
+		return false
+	}
+
+	if stateChanging && cs.csrfName != "" && r.Header.Get(HeaderCSRFToken) != cs.csrf {
+		return false
+	}
+
+	return true
+}
+
+func (cs *cookieServer) client(cookieName string) *Client {
+	return &Client{
+		client:     cs.srv.Client(),
+		baseURL:    cs.srv.URL,
+		cookieName: cookieName,
+	}
+}
+
+func writeSetCookies(w http.ResponseWriter, headers ...string) {
+	for _, h := range headers {
+		w.Header().Add("Set-Cookie", h)
+	}
+}
+
+func extractFrom(t *testing.T, client *Client, headers ...string) {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	writeSetCookies(rec, headers...)
+	client.extractCookies(rec.Result())
 }

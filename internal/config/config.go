@@ -58,7 +58,7 @@ func Parse(args []string) (*Config, error) {
 
 	fs.StringVar(&rawURL, "url", "", "Authelia server URL (required)")
 	fs.StringVar(&authLevel, "auth-level", "1FA+2FA", "Authentication level: 1FA, 2FA, or 1FA+2FA")
-	fs.StringVar(&cookieName, "cookie-name", "authelia_session", "Session cookie name")
+	fs.StringVar(&cookieName, "cookie-name", "authelia_session", "Base session cookie name (Authelia session.cookies[].name)")
 	fs.StringVar(&caCert, "ca-cert", "", "Path to custom CA certificate for TLS verification")
 	fs.IntVar(&timeout, "timeout", 30, "HTTP request timeout in seconds")
 	fs.BoolVar(&debug, "debug", false, "Enable debug logging to stderr")

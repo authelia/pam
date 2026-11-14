@@ -26,13 +26,25 @@ const (
 	MethodUser = "user"
 )
 
+// Cookie name prefixes and suffixes used by Authelia 4.40+ for the portal API.
+const (
+	cookiePrefixHost     = "__Host-"
+	cookiePrefixHostHTTP = "__Host-Http-"
+	cookieSuffixCSRF     = "_csrf"
+
+	// HeaderCSRFToken carries the CSRF token on state-changing requests.
+	HeaderCSRFToken = "X-CSRF-Token"
+)
+
 // Client handles HTTP communication with the Authelia server.
 type Client struct {
-	client        *http.Client
-	baseURL       string
-	cookieName    string
-	sessionCookie string
-	debug         bool
+	client            *http.Client
+	baseURL           string
+	cookieName        string
+	sessionCookieName string
+	sessionCookie     string
+	csrfToken         string
+	debug             bool
 }
 
 // Options configures a Client.
@@ -94,7 +106,8 @@ func NewClient(opts Options) (*Client, error) {
 	}, nil
 }
 
-// FirstFactor performs first-factor authentication and stores the session cookie.
+// FirstFactor performs first-factor authentication and stores the session cookie
+// and CSRF token.
 func (c *Client) FirstFactor(username, password string) error {
 	body := map[string]string{
 		"username": username,
@@ -108,7 +121,7 @@ func (c *Client) FirstFactor(username, password string) error {
 
 	defer func() { _ = resp.Body.Close() }()
 
-	c.extractSessionCookie(resp)
+	c.extractCookies(resp)
 
 	return c.checkResponse(resp, "first factor authentication failed")
 }
@@ -133,7 +146,7 @@ func (c *Client) UserInfo() (*UserInfoResponse, error) {
 		return nil, fmt.Errorf("user info request returned status %d", resp.StatusCode)
 	}
 
-	c.extractSessionCookie(resp)
+	c.extractCookies(resp)
 
 	var info UserInfoResponse
 
@@ -172,7 +185,7 @@ func (c *Client) SecondFactorTOTP(token string) error {
 
 	defer func() { _ = resp.Body.Close() }()
 
-	c.extractSessionCookie(resp)
+	c.extractCookies(resp)
 
 	return c.checkResponse(resp, "TOTP authentication failed")
 }
@@ -189,7 +202,7 @@ func (c *Client) SecondFactorDuoPush() error {
 
 	defer func() { _ = resp.Body.Close() }()
 
-	c.extractSessionCookie(resp)
+	c.extractCookies(resp)
 
 	return c.checkResponse(resp, "duo push authentication failed")
 }
@@ -210,26 +223,87 @@ func (c *Client) postJSON(path string, body any) (*http.Response, error) {
 	c.setHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
+	if c.csrfToken != "" {
+		req.Header.Set(HeaderCSRFToken, c.csrfToken)
+	}
+
 	return c.client.Do(req)
 }
 
 func (c *Client) setHeaders(req *http.Request) {
-	if c.sessionCookie != "" {
+	if c.sessionCookie != "" && c.sessionCookieName != "" {
 		req.AddCookie(&http.Cookie{
-			Name:  c.cookieName,
+			Name:  c.sessionCookieName,
 			Value: c.sessionCookie,
 		})
 	}
 }
 
-func (c *Client) extractSessionCookie(resp *http.Response) {
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name == c.cookieName {
-			c.sessionCookie = cookie.Value
+func (c *Client) sessionCookieNames() (prefixed, bare string) {
+	return cookiePrefixHostHTTP + c.cookieName, c.cookieName
+}
 
-			return
+func (c *Client) csrfCookieName() string {
+	return cookiePrefixHost + c.cookieName + cookieSuffixCSRF
+}
+
+func (c *Client) extractCookies(resp *http.Response) {
+	prefixedName, bareName := c.sessionCookieNames()
+	csrfName := c.csrfCookieName()
+
+	var prefixed, bare, csrf *http.Cookie
+
+	for _, cookie := range resp.Cookies() {
+		switch cookie.Name {
+		case prefixedName:
+			prefixed = cookie
+		case bareName:
+			bare = cookie
+		case csrfName:
+			csrf = cookie
 		}
 	}
+
+	now := time.Now()
+
+	for _, cookie := range []*http.Cookie{bare, prefixed} {
+		if cookie != nil && isDeletionCookie(cookie, now) && c.sessionCookieName == cookie.Name {
+			c.Debugf("session cookie %q deleted by server", cookie.Name)
+
+			c.sessionCookie, c.sessionCookieName = "", ""
+		}
+	}
+
+	switch {
+	case prefixed != nil && !isDeletionCookie(prefixed, now):
+		c.setSessionCookie(prefixed)
+	case bare != nil && !isDeletionCookie(bare, now):
+		c.setSessionCookie(bare)
+	}
+
+	if csrf != nil {
+		if isDeletionCookie(csrf, now) {
+			c.Debugf("csrf cookie %q deleted by server", csrf.Name)
+
+			c.csrfToken = ""
+		} else {
+			c.Debugf("stored csrf token from cookie %q", csrf.Name)
+
+			c.csrfToken = csrf.Value
+		}
+	}
+}
+
+func (c *Client) setSessionCookie(cookie *http.Cookie) {
+	c.Debugf("stored session cookie %q", cookie.Name)
+
+	c.sessionCookieName = cookie.Name
+	c.sessionCookie = cookie.Value
+}
+
+func isDeletionCookie(cookie *http.Cookie, now time.Time) bool {
+	return cookie.Value == "" || cookie.MaxAge < 0 ||
+		(cookie.MaxAge == 0 && !cookie.Expires.IsZero() && cookie.Expires.Before(now))
 }
 
 // Debugf emits a debug message via the standard log package (routed to syslog
