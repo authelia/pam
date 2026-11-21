@@ -163,7 +163,7 @@ Options are passed as space-separated `key=value` arguments after the module pat
 | ----------------------- | :------: | ------------------------- | ---------------------------------------------------------------------------------------- |
 | `url=`                  |   yes    | -                         | Authelia server URL. **Must be `https://`.**                                             |
 | `auth-level=`           |          | `1FA+2FA`                 | `1FA`, `2FA`, or `1FA+2FA`. See [Auth levels](#auth-levels) below.                       |
-| `cookie-name=`          |          | `authelia_session`        | Session cookie name issued by Authelia. Match your `session.cookies[].name` server side. |
+| `cookie-name=`          |          | `authelia_session`        | Base session cookie name; match your server's `session.cookies[].name`. The module derives the wire names itself (`__Host-Http-<name>` for the session and `__Host-<name>_csrf` for the CSRF token), so works with Authelia both before and after 4.40. |
 | `ca-cert=`              |          | system trust store        | Path to a custom CA certificate (PEM) for TLS verification.                              |
 | `timeout=`              |          | `60`                      | Upper bound (seconds) on the entire PAM exchange. Raise for slow device-auth users.      |
 | `binary=`               |          | `/usr/bin/pam_authelia`   | Override the Go helper binary path.                                                      |
@@ -172,6 +172,13 @@ Options are passed as space-separated `key=value` arguments after the module pat
 | `oauth2-client-secret=` |          | -                         | OAuth2 client secret (for confidential clients).                                         |
 | `oauth2-scope=`         |          | `openid,authelia.pam`     | Comma-separated scopes to request on the Device Authorization endpoint. **Both `openid` and `authelia.pam` are required** — see [Device Authorization identity binding](#device-authorization-identity-binding). Extra scopes can be appended freely. |
 | `debug`                 |          | off                       | Boolean flag - emits debug lines via syslog (`LOG_AUTH`) tagged `pam_authelia`.          |
+
+> [!IMPORTANT]
+> Authelia 4.40 renames the session cookie to `__Host-Http-<name>` and requires a CSRF token on every request which
+> changes state. Earlier releases of this module use the bare cookie name and don't send the CSRF token, so they can't
+> authenticate against Authelia 4.40 or later. Upgrade the module before or together with the server. Set
+> `cookie-name=` to the base name only (e.g. `authelia_session`), never to a name with the `__Host-` or `__Secure-`
+> prefix.
 
 ### Auth levels
 

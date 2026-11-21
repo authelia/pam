@@ -11,14 +11,6 @@ import (
 	"time"
 )
 
-// RFC 8628 token endpoint polling error codes.
-const (
-	deviceAuthorizationPending = "authorization_pending"
-	deviceSlowDown             = "slow_down"
-	deviceAccessDenied         = "access_denied"
-	deviceExpiredToken         = "expired_token"
-)
-
 // DeviceAuthorizationResponse is the RFC 8628 Device Authorization endpoint response.
 type DeviceAuthorizationResponse struct {
 	DeviceCode              string `json:"device_code"`

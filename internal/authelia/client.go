@@ -16,23 +16,15 @@ import (
 	"time"
 )
 
-// 2FA method identifiers accepted in --method-priority.
-const (
-	MethodTOTP       = "totp"
-	MethodWebAuthn   = "webauthn"
-	MethodMobilePush = "mobile_push"
-	MethodDeviceAuth = "device_authorization"
-	// MethodUser resolves at runtime to the user's Authelia preference.
-	MethodUser = "user"
-)
-
 // Client handles HTTP communication with the Authelia server.
 type Client struct {
-	client        *http.Client
-	baseURL       string
-	cookieName    string
-	sessionCookie string
-	debug         bool
+	client            *http.Client
+	baseURL           string
+	cookieName        string
+	sessionCookieName string
+	sessionCookie     string
+	csrfToken         string
+	debug             bool
 }
 
 // Options configures a Client.
@@ -94,7 +86,8 @@ func NewClient(opts Options) (*Client, error) {
 	}, nil
 }
 
-// FirstFactor performs first-factor authentication and stores the session cookie.
+// FirstFactor performs first-factor authentication and stores the session cookie
+// and CSRF token.
 func (c *Client) FirstFactor(username, password string) error {
 	body := map[string]string{
 		"username": username,
@@ -108,9 +101,41 @@ func (c *Client) FirstFactor(username, password string) error {
 
 	defer func() { _ = resp.Body.Close() }()
 
-	c.extractSessionCookie(resp)
+	c.extractCookies(resp)
 
-	return c.checkResponse(resp, "first factor authentication failed")
+	if err = c.checkResponse(resp, "first factor authentication failed"); err != nil {
+		return err
+	}
+
+	c.warnMissingCSRFToken(resp)
+
+	return nil
+}
+
+func (c *Client) warnMissingCSRFToken(resp *http.Response) {
+	if c.csrfToken != "" {
+		return
+	}
+
+	var names []string
+
+	prefixed := false
+
+	for _, cookie := range resp.Cookies() {
+		names = append(names, cookie.Name)
+
+		if strings.HasPrefix(cookie.Name, cookiePrefixHostHTTP) {
+			prefixed = true
+		}
+	}
+
+	if !prefixed {
+		return
+	}
+
+	log.Printf("warning: Authelia issued prefixed session cookies %q but none is the CSRF token cookie %q expected for "+
+		"cookie-name=%q; requests which change state will be rejected. Set cookie-name to the base name of "+
+		"session.cookies[].name, without any __Host- or __Secure- prefix", names, c.csrfCookieName(), c.cookieName)
 }
 
 // UserInfo retrieves the user's 2FA method information.
@@ -129,11 +154,11 @@ func (c *Client) UserInfo() (*UserInfoResponse, error) {
 
 	defer func() { _ = resp.Body.Close() }()
 
+	c.extractCookies(resp)
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("user info request returned status %d", resp.StatusCode)
 	}
-
-	c.extractSessionCookie(resp)
 
 	var info UserInfoResponse
 
@@ -172,7 +197,7 @@ func (c *Client) SecondFactorTOTP(token string) error {
 
 	defer func() { _ = resp.Body.Close() }()
 
-	c.extractSessionCookie(resp)
+	c.extractCookies(resp)
 
 	return c.checkResponse(resp, "TOTP authentication failed")
 }
@@ -189,7 +214,7 @@ func (c *Client) SecondFactorDuoPush() error {
 
 	defer func() { _ = resp.Body.Close() }()
 
-	c.extractSessionCookie(resp)
+	c.extractCookies(resp)
 
 	return c.checkResponse(resp, "duo push authentication failed")
 }
@@ -210,26 +235,87 @@ func (c *Client) postJSON(path string, body any) (*http.Response, error) {
 	c.setHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
+	if c.csrfToken != "" {
+		req.Header.Set(HeaderCSRFToken, c.csrfToken)
+	}
+
 	return c.client.Do(req)
 }
 
 func (c *Client) setHeaders(req *http.Request) {
-	if c.sessionCookie != "" {
+	if c.sessionCookie != "" && c.sessionCookieName != "" {
 		req.AddCookie(&http.Cookie{
-			Name:  c.cookieName,
+			Name:  c.sessionCookieName,
 			Value: c.sessionCookie,
 		})
 	}
 }
 
-func (c *Client) extractSessionCookie(resp *http.Response) {
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name == c.cookieName {
-			c.sessionCookie = cookie.Value
+func (c *Client) sessionCookieNames() (prefixed, bare string) {
+	return cookiePrefixHostHTTP + c.cookieName, c.cookieName
+}
 
-			return
+func (c *Client) csrfCookieName() string {
+	return cookiePrefixHost + c.cookieName + cookieSuffixCSRF
+}
+
+func (c *Client) extractCookies(resp *http.Response) {
+	prefixedName, bareName := c.sessionCookieNames()
+	csrfName := c.csrfCookieName()
+
+	var prefixed, bare, csrf *http.Cookie
+
+	for _, cookie := range resp.Cookies() {
+		switch cookie.Name {
+		case prefixedName:
+			prefixed = cookie
+		case bareName:
+			bare = cookie
+		case csrfName:
+			csrf = cookie
 		}
 	}
+
+	now := time.Now()
+
+	for _, cookie := range []*http.Cookie{bare, prefixed} {
+		if cookie != nil && isDeletionCookie(cookie, now) && c.sessionCookieName == cookie.Name {
+			c.Debugf("session cookie %q deleted by server", cookie.Name)
+
+			c.sessionCookie, c.sessionCookieName = "", ""
+		}
+	}
+
+	switch {
+	case prefixed != nil && !isDeletionCookie(prefixed, now):
+		c.setSessionCookie(prefixed)
+	case bare != nil && !isDeletionCookie(bare, now):
+		c.setSessionCookie(bare)
+	}
+
+	if csrf != nil {
+		if isDeletionCookie(csrf, now) {
+			c.Debugf("csrf cookie %q deleted by server", csrf.Name)
+
+			c.csrfToken = ""
+		} else {
+			c.Debugf("stored csrf token from cookie %q", csrf.Name)
+
+			c.csrfToken = csrf.Value
+		}
+	}
+}
+
+func (c *Client) setSessionCookie(cookie *http.Cookie) {
+	c.Debugf("stored session cookie %q", cookie.Name)
+
+	c.sessionCookieName = cookie.Name
+	c.sessionCookie = cookie.Value
+}
+
+func isDeletionCookie(cookie *http.Cookie, now time.Time) bool {
+	return cookie.Value == "" || cookie.MaxAge < 0 ||
+		(cookie.MaxAge == 0 && !cookie.Expires.IsZero() && cookie.Expires.Before(now))
 }
 
 // Debugf emits a debug message via the standard log package (routed to syslog
@@ -241,6 +327,17 @@ func (c *Client) Debugf(format string, args ...any) {
 	}
 
 	log.Printf(format, args...)
+}
+
+func (c *Client) debugMissingCSRFToken(req *http.Request) {
+	if req == nil || req.Method == http.MethodGet || req.Method == http.MethodHead ||
+		len(req.Cookies()) == 0 || req.Header.Get(HeaderCSRFToken) != "" {
+		return
+	}
+
+	c.Debugf("request was rejected with status 403 without a CSRF token; Authelia 4.40+ rejects requests which "+
+		"change state without the token, check that cookie-name=%q matches session.cookies[].name and has no "+
+		"__Host- or __Secure- prefix", c.cookieName)
 }
 
 func (c *Client) checkResponse(resp *http.Response, failMsg string) error {
@@ -258,7 +355,11 @@ func (c *Client) checkResponse(resp *http.Response, failMsg string) error {
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return errors.New("rate limited by Authelia server, try again later")
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+	case resp.StatusCode == http.StatusForbidden:
+		c.debugMissingCSRFToken(resp.Request)
+
+		return errors.New(failMsg)
+	case resp.StatusCode == http.StatusUnauthorized:
 		return errors.New(failMsg)
 	case resp.StatusCode >= http.StatusBadRequest:
 		return fmt.Errorf("%s (status %d)", failMsg, resp.StatusCode)
