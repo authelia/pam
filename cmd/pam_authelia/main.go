@@ -245,7 +245,7 @@ func performDeviceAuth(cfg *config.Config, client *authelia.Client, username str
 		return fmt.Errorf("failed to read device-auth prompt response: %w", err)
 	}
 
-	accessToken, idToken, err := client.PollDeviceToken(cfg.OAuth2ClientID, cfg.OAuth2ClientSecret, resp.DeviceCode, resp.ExpiresIn, resp.Interval)
+	accessToken, idToken, err := client.PollDeviceToken(cfg.OAuth2ClientID, cfg.OAuth2ClientSecret, resp)
 	if err != nil {
 		return err
 	}
