@@ -25,6 +25,26 @@ type Client struct {
 	sessionCookie     string
 	csrfToken         string
 	debug             bool
+	clock             func() time.Time
+	sleeper           func(time.Duration)
+}
+
+func (c *Client) now() time.Time {
+	if c.clock != nil {
+		return c.clock()
+	}
+
+	return time.Now()
+}
+
+func (c *Client) sleep(d time.Duration) {
+	if c.sleeper != nil {
+		c.sleeper(d)
+
+		return
+	}
+
+	time.Sleep(d)
 }
 
 // Options configures a Client.
