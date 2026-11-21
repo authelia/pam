@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,14 +20,29 @@ const (
 	deviceExpiredToken         = "expired_token"
 )
 
+// RFC 8628 §3.5 polling backoff.
+const (
+	defaultPollInterval = 5 * time.Second
+	slowDownIncrement   = 5 * time.Second
+)
+
+type pollOutcome int
+
+const (
+	pollPending pollOutcome = iota
+	pollSlowDown
+	pollTimeout
+)
+
 // DeviceAuthorizationResponse is the RFC 8628 Device Authorization endpoint response.
 type DeviceAuthorizationResponse struct {
-	DeviceCode              string `json:"device_code"`
-	UserCode                string `json:"user_code"`
-	VerificationURI         string `json:"verification_uri"`
-	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
-	ExpiresIn               int    `json:"expires_in"`
-	Interval                int    `json:"interval"`
+	DeviceCode              string    `json:"device_code"`
+	UserCode                string    `json:"user_code"`
+	VerificationURI         string    `json:"verification_uri"`
+	VerificationURIComplete string    `json:"verification_uri_complete,omitempty"`
+	ExpiresIn               int       `json:"expires_in"`
+	Interval                int       `json:"interval"`
+	IssuedAt                time.Time `json:"-"`
 }
 
 // DeviceAuthorize initiates an OAuth2 Device Authorization Grant flow.
@@ -72,6 +88,8 @@ func (c *Client) DeviceAuthorize(clientID, clientSecret, scope string) (*DeviceA
 		return nil, fmt.Errorf("failed to decode device authorization response: %w", err)
 	}
 
+	result.IssuedAt = c.now()
+
 	return &result, nil
 }
 
@@ -84,32 +102,38 @@ type DeviceTokenResponse struct {
 	Error       string `json:"error"`
 }
 
-const maxPollInterval = 60
+// PollDeviceToken polls the token endpoint until approved, denied, or expired, following the RFC 8628 §3.5 backoff.
+// The first poll runs immediately since the user has usually approved before pressing Enter; every later poll waits
+// the interval in force, which starts at the server's interval, grows by 5 seconds with each slow_down, and doubles
+// with each connection timeout. Expiry is measured from when the device authorization response was received, and
+// polling stops as soon as the next poll would fall after it.
+func (c *Client) PollDeviceToken(clientID, clientSecret string, auth *DeviceAuthorizationResponse) (accessToken, idToken string, err error) {
+	if auth == nil {
+		return "", "", errors.New("missing device authorization response")
+	}
 
-// PollDeviceToken polls the token endpoint until approved, denied, or expired.
-// Honors the server's recommended interval (RFC 8628 §3.5); the first poll runs
-// immediately since the user has usually approved before pressing Enter.
-func (c *Client) PollDeviceToken(clientID, clientSecret, deviceCode string, expiresIn, interval int) (accessToken, idToken string, err error) {
+	interval := time.Duration(auth.Interval) * time.Second
 	if interval <= 0 {
-		interval = 5
+		interval = defaultPollInterval
 	}
 
-	if interval > maxPollInterval {
-		interval = maxPollInterval
+	issuedAt := auth.IssuedAt
+	if issuedAt.IsZero() {
+		issuedAt = c.now()
 	}
 
-	deadline := time.Now().Add(time.Duration(expiresIn) * time.Second)
+	deadline := issuedAt.Add(time.Duration(auth.ExpiresIn) * time.Second)
 
 	for first := true; ; first = false {
-		if time.Now().After(deadline) {
-			return "", "", errors.New("device authorization expired before user approval")
-		}
-
 		if !first {
-			time.Sleep(time.Duration(interval) * time.Second)
+			if c.now().Add(interval).After(deadline) {
+				return "", "", errors.New("device authorization expired before user approval")
+			}
+
+			c.sleep(interval)
 		}
 
-		result, slowDown, err := c.pollDeviceTokenOnce(clientID, clientSecret, deviceCode)
+		result, outcome, err := c.pollDeviceTokenOnce(clientID, clientSecret, auth.DeviceCode)
 		if err != nil {
 			return "", "", err
 		}
@@ -118,16 +142,20 @@ func (c *Client) PollDeviceToken(clientID, clientSecret, deviceCode string, expi
 			return result.AccessToken, result.IDToken, nil
 		}
 
-		if slowDown {
-			interval += 5
-			if interval > maxPollInterval {
-				interval = maxPollInterval
-			}
+		switch outcome {
+		case pollSlowDown:
+			interval += slowDownIncrement
+
+			c.Debugf("device token poll told to slow down, polling interval is now %s", interval)
+		case pollTimeout:
+			interval *= 2
+
+			c.Debugf("device token poll timed out, polling interval is now %s", interval)
 		}
 	}
 }
 
-func (c *Client) pollDeviceTokenOnce(clientID, clientSecret, deviceCode string) (result *DeviceTokenResponse, slowDown bool, err error) {
+func (c *Client) pollDeviceTokenOnce(clientID, clientSecret, deviceCode string) (result *DeviceTokenResponse, outcome pollOutcome, err error) {
 	c.Debugf("POST %s/api/oidc/token", c.baseURL)
 
 	form := url.Values{}
@@ -141,7 +169,7 @@ func (c *Client) pollDeviceTokenOnce(clientID, clientSecret, deviceCode string) 
 
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/oidc/token", strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to create token request: %w", err)
+		return nil, pollPending, fmt.Errorf("failed to create token request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -149,7 +177,15 @@ func (c *Client) pollDeviceTokenOnce(clientID, clientSecret, deviceCode string) 
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, false, fmt.Errorf("token request failed: %w", err)
+		// RFC 8628 §3.5: a connection timeout MUST reduce the polling frequency before retrying.
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			c.Debugf("device token request timed out: %v", err)
+
+			return nil, pollTimeout, nil
+		}
+
+		return nil, pollPending, fmt.Errorf("token request failed: %w", err)
 	}
 
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<14))
@@ -162,23 +198,23 @@ func (c *Client) pollDeviceTokenOnce(clientID, clientSecret, deviceCode string) 
 	c.Debugf("device token response status=%d error=%q", resp.StatusCode, parsed.Error)
 
 	if resp.StatusCode == http.StatusOK && parsed.AccessToken != "" {
-		return &parsed, false, nil
+		return &parsed, pollPending, nil
 	}
 
 	switch parsed.Error {
 	case deviceAuthorizationPending:
-		return nil, false, nil
+		return nil, pollPending, nil
 	case deviceSlowDown:
-		return nil, true, nil
+		return nil, pollSlowDown, nil
 	case deviceAccessDenied:
-		return nil, false, errors.New("device authorization denied by user")
+		return nil, pollPending, errors.New("device authorization denied by user")
 	case deviceExpiredToken:
-		return nil, false, errors.New("device authorization token expired")
+		return nil, pollPending, errors.New("device authorization token expired")
 	default:
 		if parsed.Error != "" {
-			return nil, false, fmt.Errorf("device token error: %s", parsed.Error)
+			return nil, pollPending, fmt.Errorf("device token error: %s", parsed.Error)
 		}
 
-		return nil, false, fmt.Errorf("device token request returned status %d", resp.StatusCode)
+		return nil, pollPending, fmt.Errorf("device token request returned status %d", resp.StatusCode)
 	}
 }
