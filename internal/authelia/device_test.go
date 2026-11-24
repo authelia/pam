@@ -265,10 +265,8 @@ func writeTokenError(w http.ResponseWriter, code string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
 }
 
-// headerPoll carries the 1-based poll number from the test transport to the handler.
 const headerPoll = "X-Test-Poll"
 
-// timeoutError is a net.Error reporting a timeout, as returned by a transport whose deadline elapsed.
 type timeoutError struct{}
 
 func (timeoutError) Error() string   { return "i/o timeout" }
